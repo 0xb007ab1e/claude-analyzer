@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Analyzer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <button id="log-toggle" class="iconbtn" aria-label="Toggle activity log" aria-expanded="false">🕒</button>
+      <div class="brand">🔎 Claude Analyzer</div>
+      <div class="rootinfo">
+        <span id="root-path" title="configured root">…</span>
+        <button id="watch-toggle" class="badge watch-on" title="Pause/resume change flashing (activity log keeps recording)">● live</button>
+        <span id="mode-badge" class="badge"></span>
+      </div>
+      <button id="nav-toggle" class="iconbtn" aria-label="Toggle file tree" aria-expanded="false">☰</button>
+    </header>
+
+    <main class="layout">
+      <div id="backdrop" class="backdrop hidden"></div>
+
+      <aside id="activity" class="activity" aria-label="Activity log">
+        <div class="activity-head">
+          <span>🕒 Activity</span>
+          <button id="activity-clear" class="btn">Clear</button>
+        </div>
+        <ul id="activity-list" class="activity-list"></ul>
+      </aside>
+
+      <aside class="sidebar" id="tree" aria-label="File tree">
+        <div class="tree-loading">Loading…</div>
+      </aside>
+
+      <section class="content" aria-label="File viewer">
+        <div id="breadcrumbs" class="breadcrumbs"></div>
+
+        <div id="banner" class="banner hidden" role="status"></div>
+
+        <div id="toolbar" class="toolbar hidden">
+          <span id="file-meta" class="file-meta"></span>
+          <span class="spacer"></span>
+          <button id="btn-wrap" class="btn hidden" title="Toggle line wrapping">↩ Wrap</button>
+          <button id="btn-reveal" class="btn hidden" title="Show raw, un-redacted contents">👁 Reveal</button>
+          <button id="btn-edit" class="btn hidden">✎ Edit</button>
+          <button id="btn-save" class="btn primary hidden">💾 Save</button>
+          <button id="btn-cancel" class="btn hidden">✕ Cancel</button>
+        </div>
+
+        <div id="viewer" class="viewer">
+          <div class="empty">Select a file from the tree to view its contents.</div>
+        </div>
+      </section>
+    </main>
+
+    <div id="confirm" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-box">
+        <h2 id="confirm-title">Confirm</h2>
+        <p id="confirm-msg"></p>
+        <div class="modal-actions">
+          <button id="confirm-cancel" class="btn">Cancel</button>
+          <button id="confirm-ok" class="btn primary">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

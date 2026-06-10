@@ -1,0 +1,16 @@
+# Dependencies (this project is intentionally zero-dependency, but just in case)
+node_modules/
+
+# Logs / runtime
+*.log
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+
+# Never commit anything resembling secrets or copied .claude data
+*.credentials.json
+.env
+.env.*
+!.env.example

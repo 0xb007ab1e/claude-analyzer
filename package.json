@@ -1,0 +1,17 @@
+{
+  "name": "claude-analyzer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local web app to browse, read, and (carefully) edit the files Claude Code stores in a .claude directory — settings, resume states, sessions, history, agents, hooks, and more.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/server.ts",
+    "dev": "node --experimental-strip-types --watch src/server.ts",
+    "lan": "node --experimental-strip-types --watch src/server.ts --host 0.0.0.0",
+    "test": "node --experimental-strip-types --test 'test/**/*.test.ts'"
+  },
+  "license": "MIT"
+}

@@ -10,13 +10,23 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { watch } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname, sep } from "node:path";
 import { loadConfig, ConfigError, type Config } from "./config.ts";
 import { listDir, readFileClassified, writeFileGuarded, BACKUP_DIR } from "./files.ts";
-import { PathError } from "./paths.ts";
+import { PathError, toRelative } from "./paths.ts";
+import { searchTree } from "./xref.ts";
+import { sessionInfo } from "./sessions.ts";
+import { readSettings } from "./settings.ts";
+import { collectUsage } from "./usage.ts";
+import { collectMtimes, summarize } from "./activity.ts";
+import { listHistory, getHistoryEntry, restoreHistoryEntry } from "./history.ts";
+import { gatherExtensions } from "./extensions.ts";
+import { listProjects } from "./projects.ts";
+import { buildGraph, trimGraph, type GraphStats } from "./graph.ts";
+import { runAudit } from "./auditHandler.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
@@ -38,6 +48,58 @@ const STATIC_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
 };
+
+/**
+ * Maximum number of files visited by {@link walkFiles}.
+ * Prevents runaway I/O on very large trees while still covering typical roots.
+ */
+const WALK_FILE_CAP = 20_000;
+
+/**
+ * Recursively collect all file paths under `dir`, confined to `root`.
+ *
+ * Skips `.git`, `.analyzer-backups`, and `node_modules` subtrees. Stops once
+ * {@link WALK_FILE_CAP} files have been found and returns the partial list with
+ * the `capped` flag set to true.
+ *
+ * @param root    Absolute, already-realpath'd root (confinement boundary).
+ * @param dir     Absolute starting directory (must be inside root).
+ * @param out     Accumulator array of root-relative forward-slash paths.
+ * @param capped  [out] set to true when the file cap is reached.
+ */
+async function walkFiles(
+  root: string,
+  dir: string,
+  out: string[],
+  capped: { value: boolean },
+): Promise<void> {
+  if (capped.value) return;
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return; // unreadable directory — skip silently
+  }
+  for (const d of entries) {
+    if (capped.value) return;
+    // Skip well-known noise directories.
+    if (d.name === ".git" || d.name === ".analyzer-backups" || d.name === "node_modules") {
+      continue;
+    }
+    const abs = join(dir, d.name);
+    // Confine: skip anything that resolves outside root (e.g. symlinks).
+    if (!abs.startsWith(root + sep) && abs !== root) continue;
+    if (d.isDirectory()) {
+      await walkFiles(root, abs, out, capped);
+    } else if (d.isFile() || d.isSymbolicLink()) {
+      out.push(toRelative(root, abs));
+      if (out.length >= WALK_FILE_CAP) {
+        capped.value = true;
+        return;
+      }
+    }
+  }
+}
 
 function main(): void {
   let config: Config;
@@ -74,6 +136,7 @@ function main(): void {
         `  root:   ${config.root}\n` +
         `  mode:   ${config.allowWrite ? "read/write" : "read-only"}` +
         `${config.reload ? " · hot-reload on" : ""}\n` +
+        `  source: ${config.sourceDir ?? "(not configured — xref feature unavailable)"}\n` +
         `  bind:   ${config.host}:${config.port}\n` +
         `  open:   ${urls}\n` +
         `  hosts:  ${config.allowedHosts.join(", ")}\n` +
@@ -128,9 +191,40 @@ async function handle(
       return;
     }
 
+    if (path === "/api/settings" && req.method === "GET") {
+      const reveal = url.searchParams.get("reveal") === "1";
+      if (reveal) log("audit", "reveal raw settings");
+      sendJson(res, 200, await readSettings(config.root, reveal));
+      return;
+    }
+
     if (path === "/api/list" && req.method === "GET") {
       const rel = url.searchParams.get("path") ?? "";
       sendJson(res, 200, await listDir(config.root, rel));
+      return;
+    }
+
+    if (path === "/api/usage" && req.method === "GET") {
+      sendJson(res, 200, await collectUsage({ root: config.root }));
+      return;
+    }
+
+    if (path === "/api/activity" && req.method === "GET") {
+      const rawDays = url.searchParams.get("days");
+      const days = Math.max(1, Math.min(365, parseInt(rawDays ?? "90", 10) || 90));
+      const { mtimesMs, truncated } = await collectMtimes(config.root);
+      sendJson(res, 200, summarize(mtimesMs, days, Date.now(), truncated));
+      return;
+    }
+
+    if (path === "/api/projects" && req.method === "GET") {
+      sendJson(res, 200, await listProjects(config.root));
+      return;
+    }
+
+    if (path === "/api/audit" && req.method === "GET") {
+      log("audit", "security audit scan requested");
+      sendJson(res, 200, await runAudit(config.root));
       return;
     }
 
@@ -138,7 +232,59 @@ async function handle(
       const rel = url.searchParams.get("path") ?? "";
       const reveal = url.searchParams.get("reveal") === "1";
       if (reveal) log("audit", `reveal raw content: ${rel}`);
-      sendJson(res, 200, await readFileClassified(config.root, rel, reveal));
+      const fileData = await readFileClassified(config.root, rel, reveal);
+      // Annotate transcript files with session metadata so the UI can render a
+      // rich timeline instead of the generic JSONL view.
+      sendJson(res, 200, { ...fileData, session: sessionInfo(fileData.path) });
+      return;
+    }
+
+    // -----------------------------------------------------------------------
+    // History endpoints
+    // -----------------------------------------------------------------------
+
+    if (path === "/api/history/list" && req.method === "GET") {
+      sendJson(res, 200, await listHistory(config.root));
+      return;
+    }
+
+    if (path === "/api/history/entry" && req.method === "GET") {
+      const id = url.searchParams.get("id") ?? "";
+      const reveal = url.searchParams.get("reveal") === "1";
+      if (!id) {
+        sendJson(res, 400, { error: "missing 'id' query parameter" });
+        return;
+      }
+      if (reveal) log("audit", `reveal history entry raw content: ${id}`);
+      sendJson(res, 200, await getHistoryEntry(config.root, id, reveal));
+      return;
+    }
+
+    if (path === "/api/history/restore" && req.method === "POST") {
+      if (!config.allowWrite) {
+        sendJson(res, 403, { error: "server is in read-only mode" });
+        return;
+      }
+      const body = await readBody(req);
+      let obj: unknown;
+      try {
+        obj = JSON.parse(body);
+      } catch {
+        throw new RequestError("body must be JSON");
+      }
+      if (typeof obj !== "object" || obj === null) throw new RequestError("body must be an object");
+      const { id } = obj as Record<string, unknown>;
+      if (typeof id !== "string" || id === "") throw new RequestError("missing 'id'");
+      log("audit", `restore history snapshot: ${id}`);
+      const result = await restoreHistoryEntry(config.root, id);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (path === "/api/extensions" && req.method === "GET") {
+      const reveal = url.searchParams.get("reveal") === "1";
+      if (reveal) log("audit", "reveal raw extensions (hooks/mcp secrets unredacted)");
+      sendJson(res, 200, await gatherExtensions(config.root, reveal));
       return;
     }
 
@@ -152,6 +298,43 @@ async function handle(
       log("audit", `write: ${parsed.path} (${Buffer.byteLength(parsed.content)} bytes)`);
       const result = await writeFileGuarded(config.root, parsed.path, parsed.content);
       sendJson(res, 200, result);
+      return;
+    }
+
+    if (path === "/api/xref" && req.method === "GET") {
+      if (!config.sourceDir) {
+        sendJson(res, 200, {
+          available: false,
+          message:
+            "Source cross-reference is not configured. " +
+            "Start the server with --source <dir> or set the CLAUDE_SRC environment variable " +
+            "to the Claude Code source repository path.",
+        });
+        return;
+      }
+      const rawName = url.searchParams.get("name") ?? "";
+      const token = sanitiseToken(rawName);
+      if (token === "") {
+        throw new PathError("'name' query parameter is required and must be non-empty", 400);
+      }
+      log("info", `xref search: ${token}`);
+      const result = await searchTree(config.sourceDir, token);
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (path === "/api/graph" && req.method === "GET") {
+      const filePaths: string[] = [];
+      const capped = { value: false };
+      await walkFiles(config.root, config.root, filePaths, capped);
+      const rawGraph = buildGraph(filePaths);
+      const trimmed = trimGraph(rawGraph);
+      const stats: GraphStats = {
+        files: filePaths.length,
+        uuids: rawGraph.nodes.filter((n) => n.type === "uuid").length,
+        truncated: trimmed.truncated || capped.value,
+      };
+      sendJson(res, 200, { nodes: trimmed.nodes, edges: trimmed.edges, stats });
       return;
     }
 
@@ -225,6 +408,21 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+}
+
+/**
+ * Sanitise a user-supplied token for the xref search.
+ *
+ * Strips path separators (`/`, `\`) and null bytes so the token can never be
+ * used to navigate the filesystem or inject control characters. The result is
+ * used as a plain substring, not a regex, so no further escaping is needed.
+ *
+ * @param raw  The raw `name` query parameter value.
+ * @returns  The sanitised token, or an empty string if nothing remains.
+ */
+function sanitiseToken(raw: string): string {
+  // Remove path separators, null bytes, and leading/trailing whitespace.
+  return raw.replace(/[/\\]/g, "").replace(/\0/g, "").trim();
 }
 
 /** Parse and validate the write request body. */

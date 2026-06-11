@@ -8,18 +8,94 @@
   </head>
   <body>
     <header class="topbar">
-      <button id="log-toggle" class="iconbtn" aria-label="Toggle activity log" aria-expanded="false">🕒</button>
       <div class="brand">🔎 Claude Analyzer</div>
+
+      <!-- Single grouped menu for all the feature views. Items delegate to the
+           (hidden) original toggle buttons below so each feature's wiring is
+           reused unchanged. -->
+      <div class="menu">
+        <button id="views-btn" class="btn" aria-haspopup="true" aria-expanded="false">▾ Views</button>
+        <div id="views-menu" class="views-menu hidden" role="menu" aria-label="Views">
+          <button class="views-item" role="menuitem" data-target="#log-toggle">🕒 Activity log</button>
+          <button class="views-item" role="menuitem" data-target="#projects-toggle">🗂 Projects</button>
+          <button class="views-item" role="menuitem" data-target="#settings-toggle">⚙ Settings</button>
+          <button class="views-item" role="menuitem" data-target="#ext-toggle">🧩 Extensions</button>
+          <button class="views-item" role="menuitem" data-target="#history-toggle">🕰 File history</button>
+          <div class="views-sep"></div>
+          <button class="views-item" role="menuitem" data-target="#usage-toggle">📊 Usage &amp; cost</button>
+          <button class="views-item" role="menuitem" data-target="#timeline-toggle">📅 Activity timeline</button>
+          <button class="views-item" role="menuitem" data-target="#graph-toggle">🕸 Relationship graph</button>
+          <button class="views-item" role="menuitem" data-target="#audit-toggle">🛡 Security audit</button>
+        </div>
+      </div>
+
       <div class="rootinfo">
         <span id="root-path" title="configured root">…</span>
         <button id="watch-toggle" class="badge watch-on" title="Pause/resume change flashing (activity log keeps recording)">● live</button>
         <span id="mode-badge" class="badge"></span>
       </div>
+
+      <!-- Original feature toggles, kept (hidden) so their existing click
+           handlers stay wired; the Views menu items .click() these. -->
+      <div class="hidden-toggles" aria-hidden="true">
+        <button id="log-toggle" class="iconbtn" aria-label="Toggle activity log" aria-expanded="false">🕒</button>
+        <button id="history-toggle" class="iconbtn" aria-label="Toggle file history" aria-expanded="false">🕰</button>
+        <button id="ext-toggle" class="iconbtn" aria-label="Extensions explorer" aria-expanded="false" title="Hooks / Agents / Skills / Commands / MCP">🧩</button>
+        <button id="settings-toggle" class="badge" title="View merged settings, layer breakdown, and .bak diff">⚙ Settings</button>
+        <button id="usage-toggle" class="btn" title="Usage &amp; cost dashboard">📊 Usage</button>
+        <button id="timeline-toggle" class="btn" aria-label="Open activity timeline" title="Activity timeline — calendar heatmap of file changes">📅 Activity</button>
+        <button id="projects-toggle" class="iconbtn always-show" aria-label="Toggle project map" aria-expanded="false">🗂 Projects</button>
+        <button id="graph-toggle" class="btn" title="Relationship graph — link artifacts by shared session UUIDs">🕸 Graph</button>
+        <button id="audit-toggle" class="btn audit-btn" aria-label="Open security audit panel" aria-expanded="false">🛡 Audit</button>
+      </div>
+
       <button id="nav-toggle" class="iconbtn" aria-label="Toggle file tree" aria-expanded="false">☰</button>
     </header>
 
+    <!-- Security audit slide-out drawer -->
+    <div id="audit-drawer" class="audit-drawer" role="complementary" aria-label="Security audit">
+      <div class="audit-head">
+        <span>🛡 Security &amp; Retention Audit</span>
+        <button id="audit-close" class="btn" aria-label="Close audit panel">✕</button>
+      </div>
+      <div id="audit-body" class="audit-body">
+        <div class="audit-loading">Click <strong>Run Audit</strong> to scan the tree.</div>
+        <button id="audit-run" class="btn primary audit-run-btn">▶ Run Audit</button>
+      </div>
+    </div>
+
     <main class="layout">
       <div id="backdrop" class="backdrop hidden"></div>
+
+      <!-- History panel (slides in from the left, same side as activity log) -->
+      <aside id="history" class="history-panel" aria-label="File history" aria-hidden="true">
+        <div class="history-head">
+          <span>🕰 History</span>
+          <button id="history-close" class="btn" aria-label="Close history panel">✕</button>
+        </div>
+        <div id="history-list-area">
+          <div class="history-empty">Click 🕰 to load snapshots.</div>
+        </div>
+        <div id="history-entry-area" class="hidden">
+          <div class="history-entry-head">
+            <button id="history-back" class="btn">← Back</button>
+            <span id="history-entry-title" class="history-entry-title"></span>
+            <button id="history-restore" class="btn danger hidden">↩ Restore</button>
+          </div>
+          <div id="history-diff"></div>
+        </div>
+      </aside>
+
+      <!-- Project map (slides in from the left) -->
+      <aside id="projects-panel" class="projects-panel" aria-label="Project map">
+        <div class="panel-head">
+          <span>🗂 Projects</span>
+          <button id="projects-close" class="btn" aria-label="Close project map">✕</button>
+        </div>
+        <div id="projects-body" class="projects-body">
+          <div class="projects-loading">Loading…</div>
+        </div>
+      </aside>
 
       <aside id="activity" class="activity" aria-label="Activity log">
         <div class="activity-head">
@@ -43,6 +119,7 @@
           <span class="spacer"></span>
           <button id="btn-wrap" class="btn hidden" title="Toggle line wrapping">↩ Wrap</button>
           <button id="btn-reveal" class="btn hidden" title="Show raw, un-redacted contents">👁 Reveal</button>
+          <button id="btn-xref" class="btn hidden" title="Show where this file is read/written in the Claude Code source">🔗 Source</button>
           <button id="btn-edit" class="btn hidden">✎ Edit</button>
           <button id="btn-save" class="btn primary hidden">💾 Save</button>
           <button id="btn-cancel" class="btn hidden">✕ Cancel</button>
@@ -54,6 +131,92 @@
       </section>
     </main>
 
+    <!-- Settings panel overlay ------------------------------------------------->
+    <div id="settings-panel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-label="Settings explorer">
+      <div class="settings-panel-inner">
+        <div class="settings-panel-head">
+          <span>⚙ Settings Explorer</span>
+          <div class="settings-panel-actions">
+            <button id="settings-reveal-btn" class="btn" title="Show raw, un-redacted settings values">👁 Reveal</button>
+            <button id="settings-close" class="btn" aria-label="Close settings panel">✕ Close</button>
+          </div>
+        </div>
+        <div id="settings-panel-body" class="settings-panel-body">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Usage dashboard overlay -->
+    <div id="usage-overlay" class="usage-overlay hidden" role="dialog" aria-modal="true" aria-label="Usage dashboard">
+      <div class="usage-panel">
+        <div class="usage-header">
+          <span class="usage-title">📊 Usage &amp; Cost Dashboard</span>
+          <span class="usage-subtitle" id="usage-generated-at"></span>
+          <button id="usage-refresh" class="btn" title="Refresh data">↺ Refresh</button>
+          <button id="usage-close" class="btn" title="Close dashboard">✕</button>
+        </div>
+        <div id="usage-body" class="usage-body">
+          <div class="usage-loading">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity timeline overlay -->
+    <div id="timeline-overlay" class="timeline-overlay hidden" role="dialog" aria-modal="true" aria-label="Activity timeline">
+      <div class="timeline-panel">
+        <div class="timeline-head">
+          <span>📅 Activity Timeline</span>
+          <div class="timeline-controls">
+            <label class="timeline-days-label" for="timeline-days">Days:</label>
+            <select id="timeline-days" class="timeline-days-select">
+              <option value="30">30</option>
+              <option value="90" selected>90</option>
+              <option value="180">180</option>
+              <option value="365">365</option>
+            </select>
+            <button id="timeline-close" class="btn" aria-label="Close timeline">✕</button>
+          </div>
+        </div>
+        <div id="timeline-body" class="timeline-body">
+          <div class="timeline-loading">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Extensions explorer panel (hooks / agents / skills / commands / MCP) -->
+    <div id="ext-panel" class="ext-panel" role="dialog" aria-modal="true" aria-label="Extensions explorer" aria-hidden="true">
+      <div class="ext-panel-inner">
+        <div class="ext-panel-head">
+          <h2>🧩 Extensions</h2>
+          <button id="ext-close" class="iconbtn" aria-label="Close extensions panel">✕</button>
+        </div>
+        <div class="ext-tabs" role="tablist">
+          <button class="ext-tab active" role="tab" data-tab="hooks" aria-selected="true">Hooks</button>
+          <button class="ext-tab" role="tab" data-tab="agents" aria-selected="false">Agents</button>
+          <button class="ext-tab" role="tab" data-tab="skills" aria-selected="false">Skills</button>
+          <button class="ext-tab" role="tab" data-tab="commands" aria-selected="false">Commands</button>
+          <button class="ext-tab" role="tab" data-tab="mcp" aria-selected="false">MCP</button>
+        </div>
+        <div id="ext-content" class="ext-content">
+          <div class="ext-loading">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Source cross-reference overlay -->
+    <div id="xref-overlay" class="xref-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="xref-title">
+      <div class="xref-box">
+        <div class="xref-header">
+          <h2 id="xref-title" class="xref-title">🔗 Source cross-reference</h2>
+          <button id="xref-close" class="btn" aria-label="Close">✕</button>
+        </div>
+        <div id="xref-body" class="xref-body">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+
     <div id="confirm" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-box">
         <h2 id="confirm-title">Confirm</h2>
@@ -63,6 +226,25 @@
           <button id="confirm-ok" class="btn primary">Confirm</button>
         </div>
       </div>
+    </div>
+
+    <!-- Relationship-graph overlay -->
+    <div id="graph-overlay" class="graph-overlay hidden" role="dialog" aria-modal="true" aria-label="Relationship graph">
+      <div class="graph-header">
+        <span class="graph-title">🕸 Relationship Graph</span>
+        <span id="graph-stats" class="graph-stats"></span>
+        <span class="spacer"></span>
+        <button id="graph-fit" class="btn" title="Fit graph to view">⊡ Fit</button>
+        <button id="graph-close" class="btn" title="Close graph (Escape)">✕ Close</button>
+      </div>
+      <div class="graph-legend">
+        <span class="legend-item"><span class="legend-dot uuid"></span> UUID</span>
+        <span class="legend-item"><span class="legend-dot file"></span> File</span>
+      </div>
+      <canvas id="graph-canvas" class="graph-canvas" tabindex="0" aria-label="Force-directed relationship graph"></canvas>
+      <div id="graph-tooltip" class="graph-tooltip hidden"></div>
+      <div id="graph-loading" class="graph-loading">Loading graph…</div>
+      <div id="graph-empty" class="graph-empty hidden">No session UUIDs found in file paths.</div>
     </div>
 
     <script type="module" src="/app.js"></script>

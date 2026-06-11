@@ -14,6 +14,9 @@ import { realpathSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 
+/** Default path for the Claude Code source repository (used by --source). */
+const DEFAULT_SOURCE_DIR = "/home/b007ab1e/_src/_dev/artificial-intelligence/claude/claude-code";
+
 /** Loopback host names always accepted in the Host header. */
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
 
@@ -34,6 +37,15 @@ export interface Config {
   allowedHosts: string[];
   /** When true, serve the live-reload SSE endpoint and tell the UI to use it. */
   reload: boolean;
+  /**
+   * Absolute, realpath'd path to the Claude Code source repository used by the
+   * source cross-reference feature (`/api/xref`). `null` when not configured or
+   * the directory doesn't exist — the feature degrades gracefully.
+   *
+   * Set via `--source <dir>` or `CLAUDE_SRC` env. Defaults to
+   * `/home/b007ab1e/_src/_dev/artificial-intelligence/claude/claude-code`.
+   */
+  sourceDir: string | null;
 }
 
 /** A configuration problem that should stop startup with a friendly message. */
@@ -58,7 +70,10 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const reload = flags.noReload ? false : true;
   const allowedHosts = buildAllowedHosts(host, flags.allowHost, env.ALLOW_HOST);
 
-  return { root, host, port, allowWrite, allowedHosts, reload };
+  const rawSource = flags.source ?? env.CLAUDE_SRC ?? DEFAULT_SOURCE_DIR;
+  const sourceDir = validateSourceDir(rawSource);
+
+  return { root, host, port, allowWrite, allowedHosts, reload, sourceDir };
 }
 
 /**
@@ -88,6 +103,26 @@ function buildAllowedHosts(
   return [...set];
 }
 
+/**
+ * Attempt to resolve and validate the source directory for the xref feature.
+ * Unlike {@link validateRoot}, this is **non-fatal**: if the path doesn't exist
+ * or isn't a directory, we return `null` and let the feature degrade gracefully
+ * rather than refusing to start.
+ *
+ * @param raw  Raw path string from flags or env.
+ * @returns  Realpath'd absolute path, or `null` if unreachable.
+ */
+function validateSourceDir(raw: string): string | null {
+  try {
+    const abs = resolve(raw);
+    const real = realpathSync(abs);
+    if (!statSync(real).isDirectory()) return null;
+    return real;
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve and verify the root is an existing directory. */
 function validateRoot(raw: string): string {
   const abs = resolve(raw);
@@ -114,6 +149,8 @@ interface ParsedFlags {
   readOnly?: boolean;
   noReload?: boolean;
   allowHost: string[];
+  /** Path to the Claude Code source tree for the xref feature. */
+  source?: string;
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -143,11 +180,15 @@ function parseFlags(argv: string[]): ParsedFlags {
       case "--reload":
         out.noReload = false;
         break;
+      case "--source":
+        out.source = requireValue(argv, ++i, "--source");
+        break;
       default:
         if (a?.startsWith("--root=")) out.root = a.slice("--root=".length);
         else if (a?.startsWith("--host=")) out.host = a.slice("--host=".length);
         else if (a?.startsWith("--port=")) out.port = a.slice("--port=".length);
         else if (a?.startsWith("--allow-host=")) out.allowHost.push(a.slice("--allow-host=".length));
+        else if (a?.startsWith("--source=")) out.source = a.slice("--source=".length);
     }
   }
   return out;

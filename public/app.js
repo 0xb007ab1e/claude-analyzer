@@ -3381,6 +3381,16 @@ async function init() {
   });
   $("#graph-zoom-in").addEventListener("click", () => zoomBy(1.25));
   $("#graph-zoom-out").addEventListener("click", () => zoomBy(0.8));
+  // Filter / layout controls rebuild the graph; search focuses a group.
+  for (const id of ["graph-layout", "graph-kind", "graph-topn", "graph-hidetiny"]) {
+    $("#" + id).addEventListener("change", () => rebuildGraph());
+  }
+  let searchTimer = null;
+  $("#graph-search").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    const v = e.target.value;
+    searchTimer = setTimeout(() => focusGraphSearch(v), 200);
+  });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("#graph-overlay").classList.contains("hidden")) {
       closeGraph();
@@ -3412,25 +3422,19 @@ const LABEL_COLOR = "#9399b2";
 const HIGHLIGHT_COLOR = "#f9e2af";
 
 /**
- * Simulation parameters. Kept as constants so the logic is easy to follow.
- * Spring and repulsion constants are intentionally small for a calm layout.
+ * Simulation parameters per layout mode. FORCE is the default global
+ * force-directed layout; GRID anchors each cluster to its own grid cell.
  */
-const SIM = {
-  /** Natural edge length (spring rest length in canvas units). */
-  springLen: 90,
-  /** Spring stiffness (a bit firmer so cluster members stay together). */
-  springK: 0.02,
-  /** Repulsion force coefficient (all pairs) — higher pushes clusters apart. */
-  repulse: 5000,
-  /** Velocity damping per tick (0–1). */
-  damping: 0.82,
-  /** Stop simulation when max velocity drops below this. */
-  stopThreshold: 0.15,
-  /** Hard iteration cap (prevents infinite loop if the graph never settles). */
-  maxIter: 6000,
-  /** Ticks per animation frame (balance smoothness vs. speed). */
-  ticksPerFrame: 6,
+const SIM_FORCE = {
+  springLen: 90, springK: 0.02, repulse: 5000, damping: 0.82,
+  center: 0.004, stopThreshold: 0.15, maxIter: 6000, ticksPerFrame: 6,
 };
+/**
+ * Active simulation parameters. Only the force layout runs a simulation; the
+ * grid layout is deterministic (see {@link placeGrid}), so this always returns
+ * the force parameters.
+ */
+function simParams() { return SIM_FORCE; }
 
 /** Graph overlay state (reset on each open). */
 const gs = {
@@ -3528,13 +3532,9 @@ async function openGraph() {
   const overlay = $("#graph-overlay");
   overlay.classList.remove("hidden");
   $("#graph-loading").classList.remove("hidden");
+  $("#graph-loading").textContent = "Loading graph…";
   $("#graph-empty").classList.add("hidden");
   $("#graph-stats").textContent = "";
-  // Remove any leftover truncated notice from a previous session.
-  const old = overlay.querySelector(".graph-truncated");
-  if (old) old.remove();
-
-  // Stop a running simulation from a previous open.
   if (gs.rafId !== null) { cancelAnimationFrame(gs.rafId); gs.rafId = null; }
 
   let data;
@@ -3544,12 +3544,73 @@ async function openGraph() {
     $("#graph-loading").textContent = `Error: ${escapeHtml(e.message)}`;
     return;
   }
+  gs.raw = data;
+  $("#graph-loading").classList.add("hidden");
+  rebuildGraph();
+}
 
-  // Determine the set to render (server may have already capped, but cap again
-  // client-side in case GRAPH_RENDER_CAP < GRAPH_NODE_CAP).
-  let nodes = data.nodes;
-  let edges = data.edges;
-  let truncated = data.stats.truncated;
+/** Read the filter/layout controls into gs.filter / gs.layout. */
+function readGraphControls() {
+  gs.layout = $("#graph-layout")?.value || "force";
+  gs.filter = {
+    minSize: $("#graph-hidetiny")?.checked ? 3 : 1,
+    topN: parseInt($("#graph-topn")?.value || "0", 10) || 0,
+    kind: $("#graph-kind")?.value || "all",
+  };
+}
+
+/**
+ * Apply the current filters to the raw graph, (re)cluster + colour, lay out
+ * per the selected mode, and (re)start the simulation. Runs on open and on any
+ * control change. Search is a separate focus action and does not rebuild.
+ */
+function rebuildGraph() {
+  if (!gs.raw) return;
+  readGraphControls();
+  const overlay = $("#graph-overlay");
+  overlay.querySelector(".graph-truncated")?.remove();
+  if (gs.rafId !== null) { cancelAnimationFrame(gs.rafId); gs.rafId = null; }
+
+  // 1. Connected components of the full raw graph (for size/kind/top filters).
+  const adj = new Map();
+  for (const nd of gs.raw.nodes) adj.set(nd.id, []);
+  for (const e of gs.raw.edges) { adj.get(e.source)?.push(e.target); adj.get(e.target)?.push(e.source); }
+  const compOf = new Map();
+  let comp = 0;
+  for (const nd of gs.raw.nodes) {
+    if (compOf.has(nd.id)) continue;
+    const stack = [nd.id];
+    compOf.set(nd.id, comp);
+    while (stack.length) {
+      const cur = stack.pop();
+      for (const nb of adj.get(cur) || []) if (!compOf.has(nb)) { compOf.set(nb, comp); stack.push(nb); }
+    }
+    comp++;
+  }
+  const members = Array.from({ length: comp }, () => []);
+  for (const nd of gs.raw.nodes) members[compOf.get(nd.id)].push(nd);
+
+  // 2. Pick surviving components by the filters.
+  const { minSize, topN, kind } = gs.filter;
+  let comps = members.map((m, i) => ({ i, m })).filter((c) => c.m.length >= minSize);
+  if (kind !== "all") {
+    comps = comps.filter((c) => c.m.some((nd) => {
+      if (nd.type !== "file") return false;
+      if (kind === "session") return !!nd.path && nd.path.startsWith("projects/");
+      return graphFileLabel(nd.path || "") === kind;
+    }));
+  }
+  comps.sort((a, b) => b.m.length - a.m.length);
+  const groupCount = comps.length;
+  if (topN > 0) comps = comps.slice(0, topN);
+  const keepId = new Set();
+  for (const c of comps) for (const nd of c.m) keepId.add(nd.id);
+
+  let nodes = gs.raw.nodes.filter((nd) => keepId.has(nd.id));
+  let edges = gs.raw.edges.filter((e) => keepId.has(e.source) && keepId.has(e.target));
+
+  // 3. Render cap (largest-degree first).
+  let truncated = false;
   if (nodes.length > GRAPH_RENDER_CAP) {
     const sorted = [...nodes].sort((a, b) => b.degree - a.degree);
     const kept = new Set(sorted.slice(0, GRAPH_RENDER_CAP).map((n) => n.id));
@@ -3558,50 +3619,23 @@ async function openGraph() {
     truncated = true;
   }
 
-  if (nodes.length === 0) {
-    $("#graph-loading").classList.add("hidden");
-    $("#graph-empty").classList.remove("hidden");
-    return;
-  }
-
-  // Update stats bar.
   $("#graph-stats").textContent =
-    `${data.stats.files.toLocaleString()} files · ${data.stats.uuids.toLocaleString()} UUIDs · ${nodes.length} nodes · ${edges.length} edges`;
-
+    `${gs.raw.stats.files.toLocaleString()} files · ${gs.raw.stats.uuids.toLocaleString()} UUIDs · ${nodes.length} nodes · ${edges.length} edges · ${groupCount} groups`;
+  $("#graph-empty").classList.toggle("hidden", nodes.length > 0);
+  if (nodes.length === 0) { gs.nodes = []; gs.links = []; drawGraph(); return; }
   if (truncated) {
     const note = document.createElement("div");
     note.className = "graph-truncated";
-    note.textContent = `⚠ Showing top ${GRAPH_RENDER_CAP} nodes by degree; graph was larger.`;
+    note.textContent = `⚠ Showing top ${GRAPH_RENDER_CAP} nodes; use the filters above to narrow.`;
     overlay.appendChild(note);
   }
 
-  gs.truncated = truncated;
-
-  // Initialise simulation state — place nodes in a jittered circle.
-  const n = nodes.length;
-  const r0 = Math.max(120, n * 8);
+  // 4. Build live node/link objects (positions set by the layout step).
   gs.nodeMap.clear();
-  gs.nodes = nodes.map((nd, i) => {
-    const angle = (2 * Math.PI * i) / n;
-    const jitter = r0 * 0.15 * (Math.random() - 0.5);
-    const obj = {
-      ...nd,
-      x: (r0 + jitter) * Math.cos(angle),
-      y: (r0 + jitter) * Math.sin(angle),
-      vx: 0,
-      vy: 0,
-    };
-    gs.nodeMap.set(nd.id, obj);
-    return obj;
-  });
-  gs.links = edges.flatMap((e) => {
-    const a = gs.nodeMap.get(e.source);
-    const b = gs.nodeMap.get(e.target);
-    return a && b ? [{ a, b }] : [];
-  });
+  gs.nodes = nodes.map((nd) => { const o = { ...nd, x: 0, y: 0, vx: 0, vy: 0 }; gs.nodeMap.set(nd.id, o); return o; });
+  gs.links = edges.flatMap((e) => { const a = gs.nodeMap.get(e.source); const b = gs.nodeMap.get(e.target); return a && b ? [{ a, b }] : []; });
 
-  // Descriptive labels: files by kind; uuid hubs by short id, upgraded to the
-  // project/session name when a session transcript is linked to the hub.
+  // Descriptive labels (files by kind; hubs by short id → project name).
   for (const nd of gs.nodes) {
     if (nd.type === "file") { nd.full = nd.path; nd.label = graphFileLabel(nd.path); }
     else { nd.full = nd.id; nd.label = `⬢ ${nd.id.slice(0, 8)}`; }
@@ -3615,25 +3649,131 @@ async function openGraph() {
     }
   }
 
-  // Colour by connected component so related artifacts share a hue.
   clusterAndColor();
+  if (gs.layout === "grid") placeGrid(); else placeForce();
 
-  gs.panX = 0;
-  gs.panY = 0;
-  gs.scale = 1;
-  gs.hovered = null;
-  gs.iter = 0;
-  gs.settled = false;
-
-  // Resize canvas to match display size.
+  gs.panX = 0; gs.panY = 0; gs.scale = 1;
+  gs.hovered = null; gs.focusCluster = null; gs.iter = 0;
+  gs.settled = gs.layout === "grid"; // grid is pre-laid (static); force animates
   resizeGraphCanvas();
-
-  // Fit graph to screen after initial placement.
   fitGraph();
-
-  // Start the simulation + render loop.
-  $("#graph-loading").classList.add("hidden");
   animateGraph();
+}
+
+/** Force layout: jittered-circle seed; global repulsion + gentle centering. */
+function placeForce() {
+  gs.mode = "force";
+  gs.clusterCenters = null;
+  const n = gs.nodes.length;
+  const r0 = Math.max(120, n * 8);
+  gs.nodes.forEach((nd, i) => {
+    const angle = (2 * Math.PI * i) / n;
+    const jitter = r0 * 0.15 * (Math.random() - 0.5);
+    nd.x = (r0 + jitter) * Math.cos(angle);
+    nd.y = (r0 + jitter) * Math.sin(angle);
+    nd.vx = 0; nd.vy = 0;
+  });
+}
+
+/** Ring spacing and node spacing for the deterministic radial cluster layout. */
+const RING_GAP = 42;
+const NODE_GAP = 26;
+
+/** Estimate the radius a cluster of `size` occupies under radialLayout. */
+function clusterRadius(size) {
+  let placed = 0, ring = 1;
+  const rest = Math.max(0, size - 1);
+  while (placed < rest) {
+    const radius = ring * RING_GAP;
+    const cap = Math.max(1, Math.floor((2 * Math.PI * radius) / NODE_GAP));
+    placed += Math.min(cap, rest - placed);
+    ring++;
+  }
+  return (ring - 1) * RING_GAP + 30;
+}
+
+/** Lay a cluster out radially: highest-degree node at centre, rest in rings. */
+function radialLayout(group, cx, cy) {
+  const sorted = [...group].sort((a, b) => b.degree - a.degree);
+  const center = sorted[0];
+  center.x = cx; center.y = cy; center.vx = 0; center.vy = 0;
+  const rest = sorted.slice(1);
+  let idx = 0, ring = 1;
+  while (idx < rest.length) {
+    const radius = ring * RING_GAP;
+    const cap = Math.max(1, Math.floor((2 * Math.PI * radius) / NODE_GAP));
+    const here = Math.min(cap, rest.length - idx);
+    for (let k = 0; k < here; k++) {
+      const ang = (2 * Math.PI * k) / here + ring * 0.6;
+      const nd = rest[idx++];
+      nd.x = cx + radius * Math.cos(ang);
+      nd.y = cy + radius * Math.sin(ang);
+      nd.vx = 0; nd.vy = 0;
+    }
+    ring++;
+  }
+}
+
+/**
+ * Grid layout: each cluster is laid out radially in its own cell, and cells are
+ * shelf-packed left-to-right (largest first) with sizes proportional to the
+ * cluster — so a dominant cluster gets a big cell and small ones pack tightly.
+ * Deterministic (no force sim), so it never explodes.
+ */
+function placeGrid() {
+  gs.mode = "grid";
+  gs.clusterCenters = null;
+  const groups = [];
+  for (const nd of gs.nodes) (groups[nd.cluster] ||= []).push(nd);
+  const order = groups.filter(Boolean).sort((a, b) => b.length - a.length);
+  const GAP = 30;
+  const cells = order.map((g) => { const rad = clusterRadius(g.length); return { g, side: 2 * rad + GAP }; });
+  gs.clusterGroups = order;
+  const cvEl = graphCanvas();
+  const aspect = (cvEl.clientWidth || 1280) / (cvEl.clientHeight || 760);
+  const totalArea = cells.reduce((s, c) => s + c.side * c.side, 0);
+  const targetW = Math.max(cells.length ? cells[0].side : 1, Math.sqrt(totalArea * aspect));
+  let x = 0, y = 0, rowH = 0;
+  for (const c of cells) {
+    if (x > 0 && x + c.side > targetW) { x = 0; y += rowH; rowH = 0; }
+    radialLayout(c.g, x + c.side / 2, y + c.side / 2);
+    x += c.side;
+    rowH = Math.max(rowH, c.side);
+  }
+}
+
+/** Schedule a single redraw frame (no simulation step). */
+function scheduleGraphDraw() {
+  if (!gs.rafId) gs.rafId = requestAnimationFrame(() => { drawGraph(); gs.rafId = null; });
+}
+
+/** Focus (highlight + centre) the group matching a search query; dim the rest. */
+function focusGraphSearch(query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) { gs.focusCluster = null; scheduleGraphDraw(); return; }
+  let best = null;
+  for (const nd of gs.nodes) {
+    const hay = `${nd.label} ${nd.full || ""} ${nd.path || ""}`.toLowerCase();
+    if (!hay.includes(q)) continue;
+    if (!best || (nd.type === "uuid" && best.type !== "uuid") || nd.degree > best.degree) best = nd;
+  }
+  if (best) { gs.focusCluster = best.cluster; centerOnCluster(best.cluster); }
+  else gs.focusCluster = -1; // no match → dim everything
+  scheduleGraphDraw();
+}
+
+/** Pan/zoom so a cluster fills the view. */
+function centerOnCluster(cluster) {
+  const ns = gs.nodes.filter((n) => n.cluster === cluster);
+  if (!ns.length) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of ns) { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x); maxY = Math.max(maxY, n.y); }
+  const cv = graphCanvas();
+  const gw = (maxX - minX) || 1, gh = (maxY - minY) || 1;
+  const pad = 120;
+  gs.scale = Math.max(0.3, Math.min((cv.width - pad * 2) / gw, (cv.height - pad * 2) / gh, 2.5));
+  gs.panX = -((minX + maxX) / 2) * gs.scale;
+  gs.panY = -((minY + maxY) / 2) * gs.scale;
 }
 
 /** Resize the canvas backing store to match its CSS size. */
@@ -3653,13 +3793,15 @@ function resizeGraphCanvas() {
  * Returns the maximum velocity magnitude (used for settling detection).
  */
 function simTick() {
+  // Grid layout is deterministic (radial + shelf-packed); no simulation.
+  if (gs.mode === "grid") return 0;
+  const P = simParams();
+  const { springLen, springK, repulse, damping } = P;
   const nodes = gs.nodes;
   const links = gs.links;
-  const { springLen, springK, repulse, damping } = SIM;
   const n = nodes.length;
 
-  // Accumulate forces.
-  for (let i = 0; i < n; i++) nodes[i].fx = 0, nodes[i].fy = 0;
+  for (let i = 0; i < n; i++) { nodes[i].fx = 0; nodes[i].fy = 0; }
 
   // Spring forces along edges.
   for (const { a, b } of links) {
@@ -3673,27 +3815,19 @@ function simTick() {
     b.fx -= fx; b.fy -= fy;
   }
 
-  // Repulsion between all pairs (O(n²) — acceptable for ≤300 nodes).
+  // Global all-pairs repulsion + gentle centering (force layout).
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const a = nodes[i], b = nodes[j];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
+      const dx = b.x - a.x, dy = b.y - a.y;
       const dist2 = dx * dx + dy * dy || 1;
       const f = repulse / dist2;
-      const nx = dx / Math.sqrt(dist2);
-      const ny = dy / Math.sqrt(dist2);
+      const nx = dx / Math.sqrt(dist2), ny = dy / Math.sqrt(dist2);
       a.fx -= f * nx; a.fy -= f * ny;
       b.fx += f * nx; b.fy += f * ny;
     }
   }
-
-  // Weak centering pull so the graph doesn't drift off-screen (gentle, so
-  // disconnected clusters can fan out into their own regions).
-  for (const nd of nodes) {
-    nd.fx -= nd.x * 0.004;
-    nd.fy -= nd.y * 0.004;
-  }
+  for (const nd of nodes) { nd.fx -= nd.x * P.center; nd.fy -= nd.y * P.center; }
 
   // Integrate.
   let maxV = 0;
@@ -3726,22 +3860,27 @@ function drawGraph() {
   ctx.translate(cx, cy);
   ctx.scale(gs.scale, gs.scale);
 
-  // Draw edges first (under nodes), coloured by their cluster.
-  ctx.lineWidth = 1.2 / gs.scale;
+  // When a group is focused (search match or hover), dim everything else.
+  const focus = gs.focusCluster != null ? gs.focusCluster : (gs.hovered ? gs.hovered.cluster : null);
+  const nodeR = (nd) => (NODE_RADIUS[nd.type] ?? 5) + Math.min(7, Math.sqrt(nd.degree || 1) * 1.4);
+
+  // Edges, coloured by cluster.
+  ctx.lineWidth = 1.5 / gs.scale;
   for (const { a, b } of gs.links) {
-    ctx.strokeStyle = (gs.clusterEdge && gs.clusterEdge[a.cluster]) || "#383850";
+    ctx.globalAlpha = focus != null && a.cluster !== focus ? 0.05 : 1;
+    ctx.strokeStyle = (gs.clusterEdge && gs.clusterEdge[a.cluster]) || "#5a5a78";
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
 
-  // Draw nodes — filled with the cluster colour; UUID hubs are larger + ringed
-  // so they read as the centre of each related group.
+  // Nodes — radius scaled by degree so hubs stand out; UUID hubs are ringed.
   for (const nd of gs.nodes) {
-    const base = NODE_RADIUS[nd.type] ?? 5;
-    const r = nd.type === "uuid" ? base + 1 : base;
     const isHovered = nd === gs.hovered;
+    ctx.globalAlpha = focus != null && nd.cluster !== focus && !isHovered ? 0.12 : 1;
+    const r = nodeR(nd);
     const color = (gs.clusterColors && gs.clusterColors[nd.cluster]) || NODE_COLOR[nd.type] || NODE_COLOR.file;
     ctx.beginPath();
     ctx.arc(nd.x, nd.y, isHovered ? r + 3 : r, 0, Math.PI * 2);
@@ -3758,21 +3897,36 @@ function drawGraph() {
       ctx.stroke();
     }
   }
+  ctx.globalAlpha = 1;
 
-  // Labels: always label the UUID hubs (they carry the project/session name)
-  // plus the hovered node and any high-degree files; files otherwise stay quiet.
+  // Labels: hubs + hovered + high-degree, de-overlapped via screen-space boxes.
   const labelThreshold = Math.max(3, Math.floor(gs.nodes.length / 25));
   ctx.font = `${Math.max(9, 11 / gs.scale)}px ui-monospace, monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.lineJoin = "round";
   ctx.lineWidth = 3 / gs.scale;
-  for (const nd of gs.nodes) {
-    const show = nd === gs.hovered || nd.type === "uuid" || nd.degree >= labelThreshold;
-    if (!show) continue;
-    const r = (NODE_RADIUS[nd.type] ?? 5) + (nd.type === "uuid" ? 1 : 0);
+  const drawnBoxes = [];
+  const labelCands = [...gs.nodes].sort(
+    (a, b) => (b === gs.hovered ? 1e9 : b.degree) - (a === gs.hovered ? 1e9 : a.degree),
+  );
+  for (const nd of labelCands) {
+    const want = nd === gs.hovered || nd.type === "uuid" || nd.degree >= labelThreshold;
+    if (!want) continue;
+    if (focus != null && nd.cluster !== focus && nd !== gs.hovered) continue;
+    const r = nodeR(nd);
     const lbl = nd.label.length > 24 ? nd.label.slice(0, 12) + "…" + nd.label.slice(-8) : nd.label;
-    // Dark outline behind text keeps labels legible over the busy graph.
+    const lw = ctx.measureText(lbl).width;
+    const sx = cx + nd.x * gs.scale;
+    const sy = cy + (nd.y + r + 3) * gs.scale;
+    const bw = lw * gs.scale + 4, bh = 15;
+    const box = { x: sx - bw / 2, y: sy, w: bw, h: bh };
+    let overlap = false;
+    for (const d of drawnBoxes) {
+      if (box.x < d.x + d.w && box.x + box.w > d.x && box.y < d.y + d.h && box.y + box.h > d.y) { overlap = true; break; }
+    }
+    if (overlap && nd !== gs.hovered) continue;
+    drawnBoxes.push(box);
     ctx.strokeStyle = "rgba(17,17,27,0.85)";
     ctx.strokeText(lbl, nd.x, nd.y + r + 3);
     ctx.fillStyle = nd === gs.hovered ? "#ffffff" : LABEL_COLOR;
@@ -3784,11 +3938,12 @@ function drawGraph() {
 
 /** rAF-driven loop: run simulation ticks then draw. */
 function animateGraph() {
+  const P = simParams();
   if (!gs.settled) {
-    for (let i = 0; i < SIM.ticksPerFrame; i++) {
+    for (let i = 0; i < P.ticksPerFrame; i++) {
       const maxV = simTick();
       gs.iter++;
-      if (gs.iter >= SIM.maxIter || maxV < SIM.stopThreshold) {
+      if (gs.iter >= P.maxIter || maxV < P.stopThreshold) {
         gs.settled = true;
         break;
       }

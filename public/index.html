@@ -244,6 +244,34 @@
         <span class="legend-item"><span class="legend-dot file"></span> ● file</span>
         <span class="legend-item legend-hint">each colour = one related group · drag or pinch to pan/zoom · tap a file to open</span>
       </div>
+      <div class="graph-controls">
+        <input id="graph-search" class="graph-search" type="search" placeholder="🔍 find session / project / uuid…" aria-label="Find a group" />
+        <label class="graph-ctl">Layout
+          <select id="graph-layout">
+            <option value="force">Force</option>
+            <option value="grid">Grid</option>
+          </select>
+        </label>
+        <label class="graph-ctl">Show
+          <select id="graph-kind">
+            <option value="all">All</option>
+            <option value="session">Sessions</option>
+            <option value="transcript">Transcripts</option>
+            <option value="todo">Todos</option>
+            <option value="task">Tasks</option>
+            <option value="shell snapshot">Shell</option>
+          </select>
+        </label>
+        <label class="graph-ctl">Top
+          <select id="graph-topn">
+            <option value="0">All</option>
+            <option value="10">10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+          </select>
+        </label>
+        <label class="graph-ctl"><input id="graph-hidetiny" type="checkbox" /> Hide size&lt;3</label>
+      </div>
       <canvas id="graph-canvas" class="graph-canvas" tabindex="0" aria-label="Force-directed relationship graph"></canvas>
       <div id="graph-tooltip" class="graph-tooltip hidden"></div>
       <div id="graph-loading" class="graph-loading">Loading graph…</div>

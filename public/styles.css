@@ -2043,7 +2043,8 @@ body.projects-open .projects-panel { transform: translateX(0); }
 
 .graph-legend {
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   padding: 6px 14px;
   font-size: 12px;
   color: var(--text-dim);
@@ -2051,6 +2052,7 @@ body.projects-open .projects-panel { transform: translateX(0); }
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
+.legend-hint { color: var(--text-dim); opacity: 0.75; font-style: italic; }
 
 .legend-item {
   display: flex;
@@ -2068,6 +2070,8 @@ body.projects-open .projects-panel { transform: translateX(0); }
 
 .legend-dot.uuid { background: #cba6f7; }
 .legend-dot.file { background: #89b4fa; }
+/* Cluster colours are per-group; these dots just convey the SHAPE distinction. */
+.legend-dot.hub { background: #cba6f7; box-shadow: 0 0 0 1.5px #fff; }
 
 .graph-canvas {
   flex: 1;

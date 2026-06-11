@@ -3379,6 +3379,8 @@ async function init() {
     fitGraph();
     if (!gs.rafId) gs.rafId = requestAnimationFrame(() => { drawGraph(); gs.rafId = null; });
   });
+  $("#graph-zoom-in").addEventListener("click", () => zoomBy(1.25));
+  $("#graph-zoom-out").addEventListener("click", () => zoomBy(0.8));
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("#graph-overlay").classList.contains("hidden")) {
       closeGraph();
@@ -3415,11 +3417,11 @@ const HIGHLIGHT_COLOR = "#f9e2af";
  */
 const SIM = {
   /** Natural edge length (spring rest length in canvas units). */
-  springLen: 100,
-  /** Spring stiffness. */
-  springK: 0.015,
-  /** Repulsion force coefficient (all pairs). */
-  repulse: 3500,
+  springLen: 90,
+  /** Spring stiffness (a bit firmer so cluster members stay together). */
+  springK: 0.02,
+  /** Repulsion force coefficient (all pairs) — higher pushes clusters apart. */
+  repulse: 5000,
   /** Velocity damping per tick (0–1). */
   damping: 0.82,
   /** Stop simulation when max velocity drops below this. */
@@ -3452,6 +3454,67 @@ const gs = {
   rafId: /** @type {number|null} */ (null),
   truncated: false,
 };
+
+/** Client-side UUID matcher (mirrors the server's). */
+const GRAPH_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** Decode an encoded project dir ("-home-a--b-proj") to a short label. */
+function graphProjShort(enc) {
+  const segs = enc.replace(/^-/, "").split("-").filter(Boolean);
+  return segs.slice(-2).join("-") || enc;
+}
+
+/** Human, descriptive label for a file node derived from its root-relative path. */
+function graphFileLabel(path) {
+  const parts = path.split("/");
+  const top = parts[0] || "";
+  if (top === "projects" && parts.length >= 2) return "session";
+  if (path.startsWith("cot/transcript")) return "transcript";
+  if (top === "cot") return parts[1] || "cot";
+  if (top === "shell-snapshots") return "shell snapshot";
+  if (top === "todos" || path.includes("/todos/")) return "todo";
+  if (top === "tasks" || path.includes("/tasks/")) return "task";
+  if (top === "sessions" || top === "session-env") return "session env";
+  if (top === "file-history") return "file history";
+  if (top === "plans") return "plan";
+  // Fallback: parent dir name, else the basename with the UUID stripped.
+  if (parts.length > 1) return parts[parts.length - 2];
+  return (parts[parts.length - 1] || path).replace(GRAPH_UUID_RE, "").replace(/^[-_.]+|[-_.]+$/g, "") || "file";
+}
+
+/**
+ * Assign each node a connected-component ("cluster") index and give every
+ * cluster a distinct colour (golden-angle hue spread). Edges inherit their
+ * cluster's colour. Mutates gs.nodes; sets gs.clusterColors / gs.clusterEdge.
+ */
+function clusterAndColor() {
+  const parent = new Map();
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  for (const nd of gs.nodes) parent.set(nd.id, nd.id);
+  for (const { a, b } of gs.links) { const ra = find(a.id), rb = find(b.id); if (ra !== rb) parent.set(ra, rb); }
+  const rootIndex = new Map();
+  let next = 0;
+  for (const nd of gs.nodes) {
+    const r = find(nd.id);
+    if (!rootIndex.has(r)) rootIndex.set(r, next++);
+    nd.cluster = rootIndex.get(r);
+  }
+  gs.clusterColors = [];
+  gs.clusterEdge = [];
+  for (let i = 0; i < next; i++) {
+    const hue = Math.round((i * 137.508) % 360);
+    gs.clusterColors.push(`hsl(${hue} 70% 66%)`);
+    gs.clusterEdge.push(`hsl(${hue} 55% 58% / 0.45)`);
+  }
+}
+
+/** Zoom by `factor` about a point `(sx, sy)` offset from the canvas centre. */
+function zoomBy(factor, sx = 0, sy = 0) {
+  gs.panX = sx - factor * (sx - gs.panX);
+  gs.panY = sy - factor * (sy - gs.panY);
+  gs.scale = Math.min(Math.max(gs.scale * factor, 0.05), 10);
+  if (!gs.rafId) gs.rafId = requestAnimationFrame(() => { drawGraph(); gs.rafId = null; });
+}
 
 /** Return the canvas element (typed). */
 function graphCanvas() {
@@ -3536,6 +3599,25 @@ async function openGraph() {
     const b = gs.nodeMap.get(e.target);
     return a && b ? [{ a, b }] : [];
   });
+
+  // Descriptive labels: files by kind; uuid hubs by short id, upgraded to the
+  // project/session name when a session transcript is linked to the hub.
+  for (const nd of gs.nodes) {
+    if (nd.type === "file") { nd.full = nd.path; nd.label = graphFileLabel(nd.path); }
+    else { nd.full = nd.id; nd.label = `⬢ ${nd.id.slice(0, 8)}`; }
+  }
+  for (const { a, b } of gs.links) {
+    const hub = a.type === "uuid" ? a : b.type === "uuid" ? b : null;
+    const file = a.type === "file" ? a : b.type === "file" ? b : null;
+    if (hub && file && file.path && file.path.startsWith("projects/")) {
+      const enc = file.path.split("/")[1] || "";
+      if (enc) hub.label = `⬢ ${graphProjShort(enc)}`;
+    }
+  }
+
+  // Colour by connected component so related artifacts share a hue.
+  clusterAndColor();
+
   gs.panX = 0;
   gs.panY = 0;
   gs.scale = 1;
@@ -3606,7 +3688,8 @@ function simTick() {
     }
   }
 
-  // Weak centering pull so the graph doesn't drift off-screen.
+  // Weak centering pull so the graph doesn't drift off-screen (gentle, so
+  // disconnected clusters can fan out into their own regions).
   for (const nd of nodes) {
     nd.fx -= nd.x * 0.004;
     nd.fy -= nd.y * 0.004;
@@ -3643,42 +3726,56 @@ function drawGraph() {
   ctx.translate(cx, cy);
   ctx.scale(gs.scale, gs.scale);
 
-  // Draw edges first (under nodes).
-  ctx.strokeStyle = "#383850";
-  ctx.lineWidth = 1 / gs.scale;
-  ctx.beginPath();
+  // Draw edges first (under nodes), coloured by their cluster.
+  ctx.lineWidth = 1.2 / gs.scale;
   for (const { a, b } of gs.links) {
+    ctx.strokeStyle = (gs.clusterEdge && gs.clusterEdge[a.cluster]) || "#383850";
+    ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
+    ctx.stroke();
   }
-  ctx.stroke();
 
-  // Draw nodes.
+  // Draw nodes — filled with the cluster colour; UUID hubs are larger + ringed
+  // so they read as the centre of each related group.
   for (const nd of gs.nodes) {
-    const r = NODE_RADIUS[nd.type] ?? 5;
+    const base = NODE_RADIUS[nd.type] ?? 5;
+    const r = nd.type === "uuid" ? base + 1 : base;
     const isHovered = nd === gs.hovered;
+    const color = (gs.clusterColors && gs.clusterColors[nd.cluster]) || NODE_COLOR[nd.type] || NODE_COLOR.file;
     ctx.beginPath();
     ctx.arc(nd.x, nd.y, isHovered ? r + 3 : r, 0, Math.PI * 2);
-    ctx.fillStyle = isHovered ? HIGHLIGHT_COLOR : (NODE_COLOR[nd.type] ?? NODE_COLOR.file);
+    ctx.fillStyle = isHovered ? HIGHLIGHT_COLOR : color;
     ctx.fill();
-    if (isHovered) {
-      ctx.strokeStyle = "#ffffff44";
+    if (nd.type === "uuid") {
+      ctx.strokeStyle = "#ffffff99";
       ctx.lineWidth = 1.5 / gs.scale;
+      ctx.stroke();
+    }
+    if (isHovered) {
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2 / gs.scale;
       ctx.stroke();
     }
   }
 
-  // Draw labels for hovered node or high-degree nodes (avoid clutter).
+  // Labels: always label the UUID hubs (they carry the project/session name)
+  // plus the hovered node and any high-degree files; files otherwise stay quiet.
   const labelThreshold = Math.max(3, Math.floor(gs.nodes.length / 25));
-  ctx.fillStyle = LABEL_COLOR;
   ctx.font = `${Math.max(9, 11 / gs.scale)}px ui-monospace, monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 3 / gs.scale;
   for (const nd of gs.nodes) {
-    if (nd !== gs.hovered && nd.degree < labelThreshold) continue;
-    const r = NODE_RADIUS[nd.type] ?? 5;
-    // Truncate long labels; the tooltip shows full text.
-    const lbl = nd.label.length > 22 ? nd.label.slice(0, 10) + "…" + nd.label.slice(-8) : nd.label;
+    const show = nd === gs.hovered || nd.type === "uuid" || nd.degree >= labelThreshold;
+    if (!show) continue;
+    const r = (NODE_RADIUS[nd.type] ?? 5) + (nd.type === "uuid" ? 1 : 0);
+    const lbl = nd.label.length > 24 ? nd.label.slice(0, 12) + "…" + nd.label.slice(-8) : nd.label;
+    // Dark outline behind text keeps labels legible over the busy graph.
+    ctx.strokeStyle = "rgba(17,17,27,0.85)";
+    ctx.strokeText(lbl, nd.x, nd.y + r + 3);
+    ctx.fillStyle = nd === gs.hovered ? "#ffffff" : LABEL_COLOR;
     ctx.fillText(lbl, nd.x, nd.y + r + 3);
   }
 
@@ -3715,19 +3812,19 @@ function fitGraph() {
   const w = cv.width || cv.offsetWidth;
   const h = cv.height || cv.offsetHeight;
 
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const nd of gs.nodes) {
-    if (nd.x < minX) minX = nd.x;
-    if (nd.y < minY) minY = nd.y;
-    if (nd.x > maxX) maxX = nd.x;
-    if (nd.y > maxY) maxY = nd.y;
-  }
+  // Fit to the 2nd–98th percentile of positions so a few far-flung outlier
+  // nodes don't shrink the dense core to a dot. Outliers stay reachable by pan.
+  const xs = gs.nodes.map((n) => n.x).sort((a, b) => a - b);
+  const ys = gs.nodes.map((n) => n.y).sort((a, b) => a - b);
+  const q = (arr, p) => arr[Math.min(arr.length - 1, Math.max(0, Math.floor(p * (arr.length - 1))))];
+  const minX = q(xs, 0.02), maxX = q(xs, 0.98);
+  const minY = q(ys, 0.02), maxY = q(ys, 0.98);
   const gw = maxX - minX || 1;
   const gh = maxY - minY || 1;
   const padding = 60;
   const scaleX = (w - padding * 2) / gw;
   const scaleY = (h - padding * 2) / gh;
-  gs.scale = Math.min(scaleX, scaleY, 2);
+  gs.scale = Math.min(scaleX, scaleY, 3.5);
   // Centre the graph bounding box.
   const midX = (minX + maxX) / 2;
   const midY = (minY + maxY) / 2;
@@ -3763,23 +3860,51 @@ function nodeAt(wx, wy) {
 function setupGraphCanvas() {
   const cv = graphCanvas();
   const tooltip = $("#graph-tooltip");
+  const pointers = new Map();
   let isPanning = false;
   let panStartX = 0, panStartY = 0;
   let panOriginX = 0, panOriginY = 0;
   let didPan = false;
+  let pinchDist = 0;
 
-  // Pointer events (works for mouse + touch via pointer API).
+  // Pointer events (mouse + touch). One pointer pans; two pinch-zoom.
   cv.addEventListener("pointerdown", (e) => {
     cv.setPointerCapture(e.pointerId);
-    isPanning = true;
-    didPan = false;
-    panStartX = e.clientX;
-    panStartY = e.clientY;
-    panOriginX = gs.panX;
-    panOriginY = gs.panY;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      isPanning = true;
+      didPan = false;
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      panOriginX = gs.panX;
+      panOriginY = gs.panY;
+    } else if (pointers.size === 2) {
+      isPanning = false;
+      const [p1, p2] = [...pointers.values()];
+      pinchDist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    }
   });
 
   cv.addEventListener("pointermove", (e) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // Two-finger pinch zoom, centred on the gesture midpoint.
+    if (pointers.size === 2) {
+      const [p1, p2] = [...pointers.values()];
+      const d = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      if (pinchDist > 0 && d > 0) {
+        const rect = cv.getBoundingClientRect();
+        const mx = (p1.x + p2.x) / 2 - rect.left - cv.width / 2;
+        const my = (p1.y + p2.y) / 2 - rect.top - cv.height / 2;
+        zoomBy(d / pinchDist, mx, my);
+      }
+      pinchDist = d;
+      didPan = true;
+      gs.hovered = null;
+      tooltip.classList.add("hidden");
+      return;
+    }
+
     const { x: wx, y: wy } = canvasToWorld(cv, e.clientX, e.clientY);
 
     if (isPanning) {
@@ -3800,11 +3925,10 @@ function setupGraphCanvas() {
       if (!gs.rafId) gs.rafId = requestAnimationFrame(() => { drawGraph(); gs.rafId = null; });
     }
     if (nd) {
-      // Full path for file nodes, full UUID for uuid nodes.
-      const label = nd.path ? `${nd.label}\n${nd.path}` : nd.label;
+      // Descriptive label + full path/UUID underneath.
+      const label = nd.full ? `${nd.label}\n${nd.full}` : nd.label;
       tooltip.textContent = label;
       tooltip.classList.remove("hidden");
-      // Position near the cursor, keeping within viewport.
       const tw = tooltip.offsetWidth || 200;
       const th = tooltip.offsetHeight || 40;
       const vw = window.innerWidth;
@@ -3820,20 +3944,36 @@ function setupGraphCanvas() {
     }
   });
 
-  cv.addEventListener("pointerup", (e) => {
-    cv.releasePointerCapture(e.pointerId);
-    if (!didPan) {
-      // Treat as a click: open the file if it's a file node.
-      const { x: wx, y: wy } = canvasToWorld(cv, e.clientX, e.clientY);
-      const nd = nodeAt(wx, wy);
-      if (nd && nd.type === "file" && nd.path) {
-        closeGraph();
-        openFile(nd.path, false);
+  const endPointer = (e) => {
+    const wasSingle = pointers.size === 1;
+    pointers.delete(e.pointerId);
+    try { cv.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+    if (pointers.size < 2) pinchDist = 0;
+    if (pointers.size === 0) {
+      if (!didPan && wasSingle) {
+        // Tap (no drag) on a file node opens it.
+        const { x: wx, y: wy } = canvasToWorld(cv, e.clientX, e.clientY);
+        const nd = nodeAt(wx, wy);
+        if (nd && nd.type === "file" && nd.path) {
+          closeGraph();
+          openFile(nd.path, false);
+        }
       }
+      isPanning = false;
+      didPan = false;
+    } else if (pointers.size === 1) {
+      // Resume single-finger panning with the remaining pointer.
+      const [only] = [...pointers.values()];
+      isPanning = true;
+      didPan = true;
+      panStartX = only.x;
+      panStartY = only.y;
+      panOriginX = gs.panX;
+      panOriginY = gs.panY;
     }
-    isPanning = false;
-    didPan = false;
-  });
+  };
+  cv.addEventListener("pointerup", endPointer);
+  cv.addEventListener("pointercancel", endPointer);
 
   cv.addEventListener("pointerleave", () => {
     gs.hovered = null;

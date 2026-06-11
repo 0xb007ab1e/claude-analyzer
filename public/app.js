@@ -3750,7 +3750,8 @@ function scheduleGraphDraw() {
 /** Focus (highlight + centre) the group matching a search query; dim the rest. */
 function focusGraphSearch(query) {
   const q = (query || "").trim().toLowerCase();
-  if (!q) { gs.focusCluster = null; scheduleGraphDraw(); return; }
+  const input = $("#graph-search");
+  if (!q) { gs.focusCluster = null; input.classList.remove("nomatch"); scheduleGraphDraw(); return; }
   let best = null;
   for (const nd of gs.nodes) {
     const hay = `${nd.label} ${nd.full || ""} ${nd.path || ""}`.toLowerCase();
@@ -3758,7 +3759,8 @@ function focusGraphSearch(query) {
     if (!best || (nd.type === "uuid" && best.type !== "uuid") || nd.degree > best.degree) best = nd;
   }
   if (best) { gs.focusCluster = best.cluster; centerOnCluster(best.cluster); }
-  else gs.focusCluster = -1; // no match → dim everything
+  else gs.focusCluster = null; // no match → leave the full graph visible (don't dim all)
+  input.classList.toggle("nomatch", !best); // red border signals "no match"
   scheduleGraphDraw();
 }
 

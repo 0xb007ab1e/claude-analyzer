@@ -2075,6 +2075,7 @@ body.projects-open .projects-panel { transform: translateX(0); }
   padding: 5px 9px;
   font-size: 12px;
 }
+.graph-search.nomatch { border-color: var(--danger); }
 .graph-ctl {
   display: flex;
   align-items: center;

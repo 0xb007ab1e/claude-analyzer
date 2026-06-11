@@ -2340,20 +2340,16 @@ tr.sev-info   td { color: var(--text); }
 }
 
 
-/* ===================== feat/all — mobile topbar density fix ===================== */
-/* Ten feature controls don't fit a phone topbar; let it scroll horizontally so
-   every control (incl. the ☰ tree toggle at the far end) stays reachable. */
+/* ===================== feat/all — mobile topbar ===================== */
+/* The topbar is now just brand · Views · live · ☰, so it fits a phone without
+   scrolling. IMPORTANT: do NOT set overflow on .topbar — the Views dropdown is
+   absolutely positioned inside it and overflow:hidden would clip it (the menu
+   would open but be invisible on mobile). */
 @media (max-width: 760px) {
-  .topbar {
-    overflow-x: auto;
-    overflow-y: hidden;
-    gap: 6px;
-    -webkit-overflow-scrolling: touch;
-  }
-  .topbar::-webkit-scrollbar { height: 0; }
-  .topbar > * { flex: 0 0 auto; }       /* don't shrink controls */
+  .topbar { gap: 6px; }
   .rootinfo { margin-left: 4px; gap: 6px; }
-  .rootinfo #mode-badge { display: none; }  /* reclaim space; mode shown elsewhere */
+  .rootinfo #root-path { display: none; }   /* path is long; hide on phones */
+  .rootinfo #mode-badge { display: none; }   /* reclaim space */
 }
 
 /* ===================== feat/all — grouped "Views" menu ===================== */

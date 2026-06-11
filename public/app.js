@@ -3417,19 +3417,17 @@ const HIGHLIGHT_COLOR = "#f9e2af";
  */
 const SIM = {
   /** Natural edge length (spring rest length in canvas units). */
-  springLen: 46,
-  /** Spring stiffness. */
-  springK: 0.05,
-  /** Repulsion coefficient — applied only WITHIN a cluster (intra-cell spread). */
-  repulse: 1400,
+  springLen: 90,
+  /** Spring stiffness (a bit firmer so cluster members stay together). */
+  springK: 0.02,
+  /** Repulsion force coefficient (all pairs) — higher pushes clusters apart. */
+  repulse: 5000,
   /** Velocity damping per tick (0–1). */
-  damping: 0.85,
-  /** Pull toward the node's assigned grid-cell centre (keeps the grid orderly). */
-  cellPull: 0.09,
+  damping: 0.82,
   /** Stop simulation when max velocity drops below this. */
-  stopThreshold: 0.12,
+  stopThreshold: 0.15,
   /** Hard iteration cap (prevents infinite loop if the graph never settles). */
-  maxIter: 4000,
+  maxIter: 6000,
   /** Ticks per animation frame (balance smoothness vs. speed). */
   ticksPerFrame: 6,
 };
@@ -3620,39 +3618,6 @@ async function openGraph() {
   // Colour by connected component so related artifacts share a hue.
   clusterAndColor();
 
-  // Separate clusters into a GRID: each connected group gets its own cell, with
-  // a compact local force layout anchored to the cell centre. Largest groups go
-  // top-left. No cross-cluster repulsion, so the grid stays orderly.
-  {
-    const cvEl = graphCanvas();
-    const groups = [];
-    for (const nd of gs.nodes) (groups[nd.cluster] ||= []).push(nd);
-    const order = groups
-      .map((g, i) => ({ i, g }))
-      .filter((o) => o.g)
-      .sort((a, b) => b.g.length - a.g.length);
-    const count = order.length;
-    const aspect = (cvEl.clientWidth || 1280) / (cvEl.clientHeight || 760);
-    const cols = Math.max(1, Math.round(Math.sqrt(count * aspect)));
-    const maxLen = count ? order[0].g.length : 1;
-    const cell = Math.max(150, 2 * SIM.springLen + Math.sqrt(maxLen) * 14);
-    gs.cellSize = cell;
-    gs.gridCols = cols;
-    gs.clusterCenters = [];
-    order.forEach((o, idx) => {
-      const cx = (idx % cols) * cell;
-      const cy = Math.floor(idx / cols) * cell;
-      gs.clusterCenters[o.i] = { x: cx, y: cy };
-      for (const nd of o.g) {
-        nd.x = cx + (Math.random() - 0.5) * cell * 0.4;
-        nd.y = cy + (Math.random() - 0.5) * cell * 0.4;
-        nd.vx = 0;
-        nd.vy = 0;
-      }
-    });
-    gs.clusterGroups = order.map((o) => o.g);
-  }
-
   gs.panX = 0;
   gs.panY = 0;
   gs.scale = 1;
@@ -3708,30 +3673,26 @@ function simTick() {
     b.fx -= fx; b.fy -= fy;
   }
 
-  // Repulsion WITHIN each cluster only — clusters are anchored to their own
-  // grid cell, so they don't repel one another (keeps the grid orderly).
-  for (const group of gs.clusterGroups) {
-    const m = group.length;
-    for (let i = 0; i < m; i++) {
-      for (let j = i + 1; j < m; j++) {
-        const a = group[i], b = group[j];
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist2 = dx * dx + dy * dy || 1;
-        const f = repulse / dist2;
-        const nx = dx / Math.sqrt(dist2);
-        const ny = dy / Math.sqrt(dist2);
-        a.fx -= f * nx; a.fy -= f * ny;
-        b.fx += f * nx; b.fy += f * ny;
-      }
+  // Repulsion between all pairs (O(n²) — acceptable for ≤300 nodes).
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = nodes[i], b = nodes[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist2 = dx * dx + dy * dy || 1;
+      const f = repulse / dist2;
+      const nx = dx / Math.sqrt(dist2);
+      const ny = dy / Math.sqrt(dist2);
+      a.fx -= f * nx; a.fy -= f * ny;
+      b.fx += f * nx; b.fy += f * ny;
     }
   }
 
-  // Pull each node toward its cluster's assigned grid-cell centre.
-  const k = SIM.cellPull;
+  // Weak centering pull so the graph doesn't drift off-screen (gentle, so
+  // disconnected clusters can fan out into their own regions).
   for (const nd of nodes) {
-    const c = gs.clusterCenters[nd.cluster];
-    if (c) { nd.fx += (c.x - nd.x) * k; nd.fy += (c.y - nd.y) * k; }
+    nd.fx -= nd.x * 0.004;
+    nd.fy -= nd.y * 0.004;
   }
 
   // Integrate.
@@ -3851,14 +3812,13 @@ function fitGraph() {
   const w = cv.width || cv.offsetWidth;
   const h = cv.height || cv.offsetHeight;
 
-  // The grid layout is bounded, so frame the full extent (all cells).
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const nd of gs.nodes) {
-    if (nd.x < minX) minX = nd.x;
-    if (nd.y < minY) minY = nd.y;
-    if (nd.x > maxX) maxX = nd.x;
-    if (nd.y > maxY) maxY = nd.y;
-  }
+  // Fit to the 2nd–98th percentile of positions so a few far-flung outlier
+  // nodes don't shrink the dense core to a dot. Outliers stay reachable by pan.
+  const xs = gs.nodes.map((n) => n.x).sort((a, b) => a - b);
+  const ys = gs.nodes.map((n) => n.y).sort((a, b) => a - b);
+  const q = (arr, p) => arr[Math.min(arr.length - 1, Math.max(0, Math.floor(p * (arr.length - 1))))];
+  const minX = q(xs, 0.02), maxX = q(xs, 0.98);
+  const minY = q(ys, 0.02), maxY = q(ys, 0.98);
   const gw = maxX - minX || 1;
   const gh = maxY - minY || 1;
   const padding = 60;

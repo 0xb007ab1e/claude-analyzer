@@ -8,6 +8,8 @@
  */
 
 import { readdir, readFile, writeFile, stat, copyFile, mkdir } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { PathError, safeResolveAsync, toRelative, relJoin } from "./paths.ts";
 import { isSensitivePath, redactText } from "./redact.ts";
@@ -38,10 +40,34 @@ export interface FileRead {
   redacted: boolean;
   /** Whether raw (un-redacted) bytes were returned (reveal=true). */
   revealed: boolean;
-  /** Text content (omitted for binary). */
+  /** Text content (omitted for binary and for chunked files). */
   content?: string;
-  /** Human note for binary / skipped content. */
+  /** Human note for binary / skipped / chunked content. */
   note?: string;
+  /** True for over-cap text/JSONL: load the body via {@link readFileLines}. */
+  chunked?: boolean;
+  /** For binary files: how the UI should present it. */
+  viewer?: "image" | "pdf" | "download";
+}
+
+/** A window of lines from a (possibly very large) text/JSONL file. */
+export interface FileLines {
+  path: string;
+  /** Logical content type (json/jsonl/markdown/text). */
+  type: FileRead["type"];
+  size: number;
+  mtime: number;
+  sensitive: boolean;
+  /** First line index requested (0-based). */
+  from: number;
+  /** Total number of lines in the file. */
+  total: number;
+  /** True when more lines exist after this window. */
+  hasMore: boolean;
+  /** Whether any returned line had secrets masked. */
+  redacted: boolean;
+  /** The requested window: {n: 0-based line index, text}. */
+  lines: Array<{ n: number; text: string }>;
 }
 
 /** Max bytes we will read into memory and ship to the browser as text. */
@@ -120,10 +146,20 @@ export async function readFileClassified(
   };
 
   if (st.size > MAX_TEXT_BYTES) {
+    // Over the inline cap: text/JSONL is loaded in chunks; binaries get a viewer.
+    if (TEXT_EXTENSIONS.has(ext)) {
+      return {
+        ...base,
+        type: logicalType(ext),
+        chunked: true,
+        note: `Large file (${st.size.toLocaleString()} bytes) — loaded in chunks.`,
+      };
+    }
     return {
       ...base,
       type: "binary",
-      note: `File is ${st.size.toLocaleString()} bytes — too large to display (limit ${MAX_TEXT_BYTES.toLocaleString()}).`,
+      viewer: viewerKind(ext),
+      note: `File is ${st.size.toLocaleString()} bytes.`,
     };
   }
 
@@ -132,7 +168,8 @@ export async function readFileClassified(
     return {
       ...base,
       type: "binary",
-      note: `Binary file (${st.size.toLocaleString()} bytes). Not shown.`,
+      viewer: viewerKind(ext),
+      note: `Binary file (${st.size.toLocaleString()} bytes).`,
     };
   }
 
@@ -145,6 +182,99 @@ export async function readFileClassified(
   }
 
   return { ...base, type: logicalType(ext), redacted, content: text };
+}
+
+/** Hard cap on lines returned in one {@link readFileLines} window. */
+export const MAX_LINES_PER_REQUEST = 2000;
+
+/**
+ * Read a window of lines `[from, from+count)` from a text/JSONL file by
+ * streaming it line-by-line — never loading the whole file into memory. Each
+ * returned line is redacted unless `reveal`. Also returns the total line count.
+ *
+ * @param from    0-based first line to return (clamped to ≥ 0).
+ * @param count   Number of lines to return (clamped to 1..{@link MAX_LINES_PER_REQUEST}).
+ * @param reveal  When true, return raw lines (no redaction).
+ */
+export async function readFileLines(
+  root: string,
+  relPath: string,
+  from: number,
+  count: number,
+  reveal: boolean,
+): Promise<FileLines> {
+  const abs = await safeResolveAsync(root, relPath);
+  const st = await stat(abs);
+  if (st.isDirectory()) throw new PathError("path is a directory", 400);
+
+  const start = Math.max(0, Math.floor(from));
+  const want = Math.min(Math.max(1, Math.floor(count)), MAX_LINES_PER_REQUEST);
+  const rel = toRelative(root, abs);
+  const sensitive = isSensitivePath(rel);
+
+  const lines: Array<{ n: number; text: string }> = [];
+  let total = 0;
+  let redacted = false;
+
+  const rl = createInterface({
+    input: createReadStream(abs, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of rl) {
+    const idx = total++;
+    if (idx >= start && lines.length < want) {
+      let text = line;
+      if (!reveal) {
+        const r = redactText(text);
+        text = r.text;
+        if (r.redacted) redacted = true;
+      }
+      lines.push({ n: idx, text });
+    }
+  }
+
+  return {
+    path: rel,
+    type: logicalType(extensionOf(rel)),
+    size: st.size,
+    mtime: st.mtimeMs,
+    sensitive,
+    from: start,
+    total,
+    hasMore: start + lines.length < total,
+    redacted,
+    lines,
+  };
+}
+
+/** Image/PDF/other classification for binary files, driving the UI viewer. */
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "ico", "svg", "bmp", "avif"]);
+
+/** How the UI should present a binary file of this extension. */
+export function viewerKind(ext: string): "image" | "pdf" | "download" {
+  if (IMAGE_EXTENSIONS.has(ext)) return "image";
+  if (ext === "pdf") return "pdf";
+  return "download";
+}
+
+/** Best-effort Content-Type for serving a raw file by extension. */
+export function contentType(ext: string): string {
+  const map: Record<string, string> = {
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
+    webp: "image/webp", ico: "image/x-icon", svg: "image/svg+xml", bmp: "image/bmp",
+    avif: "image/avif", pdf: "application/pdf",
+  };
+  return map[ext] ?? "application/octet-stream";
+}
+
+/** Public wrapper: resolve a client path to a confined absolute path. */
+export async function resolveInRoot(root: string, relPath: string): Promise<string> {
+  return safeResolveAsync(root, relPath);
+}
+
+/** Lowercased final extension of a root-relative path (exposed for raw serving). */
+export function extOf(rel: string): string {
+  return extensionOf(rel);
 }
 
 /**

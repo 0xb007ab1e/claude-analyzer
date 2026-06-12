@@ -1,0 +1,17 @@
+# gitleaks configuration — extends the built-in ruleset.
+[extend]
+useDefault = true
+
+# These paths intentionally contain secret-SHAPED strings that are NOT real
+# secrets, so the default rules would false-positive on them:
+#   - src/redact.ts          — the regexes that DETECT secrets (sk-ant-…, JWTs, …)
+#   - test/**                — synthetic fixtures (no production data in tests)
+#   - .github/workflows/**   — pinned action commit SHAs + a release checksum (hex)
+# Real source/config is NOT allowlisted, so genuine leaks are still caught.
+[allowlist]
+description = "Intentional example token shapes; not real secrets."
+paths = [
+  '''src/redact\.ts''',
+  '''test/.*''',
+  '''\.github/.*''',
+]

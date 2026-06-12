@@ -1,6 +1,6 @@
 {
   "name": "claude-analyzer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Local web app to browse, read, and (carefully) edit the files Claude Code stores in a .claude directory — settings, resume states, sessions, history, agents, hooks, and more.",
   "type": "module",

@@ -55,13 +55,16 @@ A **▾ Views** menu opens analytical panels layered over the `.claude` tree:
 - **🕸 Relationship graph** — links artifacts that share session UUIDs (see below).
 - **🛡 Security audit** — scans for secret-shaped values, world/group-readable
   sensitive files, and stale / reclaimable data.
-- **📈 Observability** — the server's own RED metrics (request rate, error rate,
-  latency avg/p95/max, uptime, memory) plus a **persistent event journal** that
-  records filesystem changes, reveals, writes, and restores over time — so you
-  can see *how* the `.claude` folder is used across restarts, not just live. The
-  journal is stored outside the watched root (XDG state dir) and holds metadata
-  only — paths and event kinds, never file contents. Also exposed as JSON at
-  `/api/metrics` and `/api/observability`.
+- **📈 Observability** — the server's own RED metrics (throughput, success/error
+  rate, latency avg/p50/p95/p99 + histogram, a status-code distribution, and a
+  **per-route KPI table**) plus a **persistent event journal** that records
+  filesystem changes, reveals, writes, and restores over time — so you can see
+  *how* the `.claude` folder is used across restarts, not just live. Everything
+  is **drillable**: click a route, an event kind, a heatmap day, or a path to
+  open a detail panel (filtered events + summary). The journal is stored outside
+  the watched root (XDG state dir) and holds metadata only — paths and event
+  kinds, never file contents. Exposed as JSON at `/api/metrics`,
+  `/api/observability`, and `/api/journal?kind=&path=&from=&to=`.
 
 A toolbar **🔗 Source** button cross-references the open file against the **Claude Code
 source repository**, showing where that artifact is read or written in the code.

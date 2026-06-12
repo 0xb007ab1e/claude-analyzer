@@ -22,12 +22,24 @@
  */
 export const LATENCY_BUCKETS_MS = [1, 5, 10, 25, 50, 100, 250, 500, 1000] as const;
 
-/** Per-route request tally. */
+/** Per-route request tally exposed in a snapshot. */
 interface RouteStat {
   /** Total requests routed to this label. */
   count: number;
   /** Count by HTTP status class (key = "2xx" | "3xx" | "4xx" | "5xx"). */
   byClass: Record<string, number>;
+  /** Mean request latency for this route (ms). */
+  avgMs: number;
+  /** Slowest request observed for this route (ms). */
+  maxMs: number;
+}
+
+/** Internal mutable per-route accumulator (sums kept for averaging). */
+interface RouteAccum {
+  count: number;
+  byClass: Record<string, number>;
+  sumMs: number;
+  maxMs: number;
 }
 
 /** A point-in-time, JSON-serialisable view of all metrics. */
@@ -94,6 +106,7 @@ export function routeLabel(method: string, path: string): string {
     "/api/events",
     "/api/metrics",
     "/api/observability",
+    "/api/journal",
   ]);
   if (apiRoutes.has(path)) return `${m} ${path}`;
   if (path === "/" || !path.startsWith("/api/")) return "static";
@@ -137,7 +150,7 @@ export class Metrics {
   readonly #startMs: number;
   #requests = 0;
   #byClass: Record<string, number> = {};
-  #byRoute = new Map<string, RouteStat>();
+  #byRoute = new Map<string, RouteAccum>();
   #latCount = 0;
   #latSum = 0;
   #latMax = 0;
@@ -160,15 +173,18 @@ export class Metrics {
     const cls = statusClass(status);
     this.#byClass[cls] = (this.#byClass[cls] ?? 0) + 1;
 
+    const d = durationMs >= 0 ? durationMs : 0;
+
     let r = this.#byRoute.get(routeLbl);
     if (!r) {
-      r = { count: 0, byClass: {} };
+      r = { count: 0, byClass: {}, sumMs: 0, maxMs: 0 };
       this.#byRoute.set(routeLbl, r);
     }
     r.count++;
     r.byClass[cls] = (r.byClass[cls] ?? 0) + 1;
+    r.sumMs += d;
+    if (d > r.maxMs) r.maxMs = d;
 
-    const d = durationMs >= 0 ? durationMs : 0;
     this.#latCount++;
     this.#latSum += d;
     if (d > this.#latMax) this.#latMax = d;
@@ -192,7 +208,12 @@ export class Metrics {
   snapshot(nowMs: number, rssBytes = 0): MetricsSnapshot {
     const byRoute: Record<string, RouteStat> = {};
     for (const [k, v] of this.#byRoute) {
-      byRoute[k] = { count: v.count, byClass: { ...v.byClass } };
+      byRoute[k] = {
+        count: v.count,
+        byClass: { ...v.byClass },
+        avgMs: v.count > 0 ? v.sumMs / v.count : 0,
+        maxMs: v.maxMs,
+      };
     }
     const errors = (this.#byClass["4xx"] ?? 0) + (this.#byClass["5xx"] ?? 0);
     const buckets = this.#latBuckets.map((count, i) => ({

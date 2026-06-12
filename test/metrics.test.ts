@@ -50,6 +50,10 @@ test("Metrics tallies requests, classes, routes, and latency", () => {
   assert.deepEqual(s.byClass, { "2xx": 2, "4xx": 1, "5xx": 1 });
   assert.equal(s.byRoute["GET /api/file"]?.count, 3);
   assert.deepEqual(s.byRoute["GET /api/file"]?.byClass, { "2xx": 2, "4xx": 1 });
+  // Per-route latency: avg over the 3 /api/file durations (3,7,2), max = 7.
+  assert.ok(Math.abs((s.byRoute["GET /api/file"]?.avgMs ?? 0) - (3 + 7 + 2) / 3) < 1e-9);
+  assert.equal(s.byRoute["GET /api/file"]?.maxMs, 7);
+  assert.equal(s.byRoute["static"]?.maxMs, 800);
   // 2 of 4 are 4xx/5xx.
   assert.equal(s.errorRate, 0.5);
   assert.equal(s.latency.count, 4);

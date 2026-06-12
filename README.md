@@ -35,6 +35,53 @@ directly via native type-stripping).
 - **Edit & save** text files, with guardrails (see below).
 - **Redact secrets by default**; revealing raw contents is an explicit action.
 
+## Features — the Views menu
+
+A **▾ Views** menu opens analytical panels layered over the `.claude` tree:
+
+- **🕒 Activity log** — a live feed of filesystem changes as Claude Code writes them.
+- **🗂 Projects** — decodes `projects/<encoded-cwd>/` back to real working directories
+  and groups each project's sessions; click a session to open its transcript.
+- **⚙ Settings** — the effective settings merged across global / project / local
+  layers, a diff against the most recent `.bak`, and flags for unknown keys.
+- **🧩 Extensions** — hooks, agents, skills, slash commands, and MCP servers parsed
+  from the tree (with auth status).
+- **🕰 File history** — `file-history/` edit snapshots with a side-by-side diff and a
+  guarded restore.
+- **📊 Usage & cost** — sessions, token totals, and an estimated cost, charted from
+  `history.jsonl`, stats, and session transcripts.
+- **📅 Activity timeline** — a GitHub-style calendar heatmap plus an hour-of-day chart
+  of when the folder is active.
+- **🕸 Relationship graph** — links artifacts that share session UUIDs (see below).
+- **🛡 Security audit** — scans for secret-shaped values, world/group-readable
+  sensitive files, and stale / reclaimable data.
+
+A toolbar **🔗 Source** button cross-references the open file against the **Claude Code
+source repository**, showing where that artifact is read or written in the code.
+
+### Live directory watch
+
+The server watches the root and streams changes to the browser, **flashing** changed
+files in the tree and refreshing the open file in place. A **● live / ❚❚ no flash**
+toggle pauses the flashing while the activity log keeps recording.
+
+### Relationship graph
+
+- **Force** (default) layout, or a **Grid** of per-cluster cells (radial hub + rings).
+- Each connected group (a session hub + its files) gets a **unique colour** for its
+  nodes and edges; hubs are labelled by project/session, files by kind.
+- **Search** to centre + highlight a group; **filter** by kind, top-N, or hide trivial
+  2-node groups; **zoom** with +/−, scroll, or pinch; tap a file node to open it.
+
+### Safety
+
+- **Secrets redacted by default** (`.credentials.json`, tokens, keys); revealing raw
+  contents is an explicit, audit-logged action.
+- **Guarded writes**: JSON/JSONL validated, a timestamped backup saved under
+  `.analyzer-backups/` before overwrite, then a confirm step.
+- **Confined to the configured root** (no path traversal), **loopback bind** with a Host
+  allowlist (anti-DNS-rebinding), and an optional **read-only** mode.
+
 ## Quick start
 
 ```bash

@@ -16,7 +16,62 @@ const state = {
   current: /** @type {null | object} */ (null), // last FileRead
   editing: false,
   watchPaused: false, // when true, suppress flash highlights (activity log still records)
+  // When true, show friendly project-derived names; when false, raw UUIDs / full
+  // paths. Applied across the graph, Projects, Usage, and the session viewer.
+  friendlyNames: true,
+  lastProjects: /** @type {null | Array} */ (null), // cache for re-render on toggle
+  lastUsage: /** @type {null | object} */ (null),
 };
+
+// ---------------------------------------------------------------------------
+// Display-name mode: friendly project-derived names vs raw UUIDs / paths.
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive a friendly project name from a decoded cwd or an encoded project dir,
+ * dropping directory-path identifiers (home, username, the long prefix) and
+ * keeping the last 1–2 path segments. Splits on both real separators and the
+ * encoded "-" so it works for either input form.
+ */
+function friendlyProjectName(cwdOrEncoded) {
+  if (!cwdOrEncoded) return "(unknown)";
+  const segs = String(cwdOrEncoded).split(/[/\\-]+/).filter(Boolean);
+  if (segs.length === 0) return String(cwdOrEncoded);
+  return segs.slice(-2).join("-");
+}
+
+/** Update the Views-menu "Names" toggle item to reflect the current mode. */
+function updateNamesToggle() {
+  const el = document.getElementById("names-toggle");
+  if (!el) return;
+  el.setAttribute("aria-checked", String(state.friendlyNames));
+  const lbl = el.querySelector(".names-toggle-label");
+  if (lbl) lbl.textContent = state.friendlyNames ? "Names: Friendly" : "Names: UUID";
+}
+
+/** Set the name-mode, persist it, sync both toggles, and re-render open views. */
+function setFriendlyNames(value) {
+  state.friendlyNames = !!value;
+  localStorage.setItem("friendlyNames", state.friendlyNames ? "1" : "0");
+  updateNamesToggle();
+  const cb = /** @type {HTMLInputElement|null} */ (document.getElementById("graph-friendly"));
+  if (cb) cb.checked = state.friendlyNames;
+  applyNameMode();
+}
+
+/** Re-render whatever name-bearing views are currently visible after a toggle. */
+function applyNameMode() {
+  if (!$("#graph-overlay").classList.contains("hidden")) scheduleGraphDraw();
+  if (state.lastProjects && document.body.classList.contains("projects-open")) {
+    renderProjects(state.lastProjects, $("#projects-body"));
+  }
+  if (state.lastUsage && !$("#usage-overlay").classList.contains("hidden")) {
+    $("#usage-body").innerHTML = renderUsageDashboard(state.lastUsage);
+  }
+  if (state.current && state.current.session && state.current.session.isSession) {
+    renderContent(state.current);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -846,8 +901,12 @@ function renderSessionHeader(session) {
   cwdLabel.textContent = "Project:";
   const cwdVal = document.createElement("code");
   cwdVal.className = "session-meta-val";
-  cwdVal.textContent = session.cwd ?? "(unknown)";
-  cwdVal.title = "Best-effort decoded project directory (encoding is ambiguous)";
+  cwdVal.textContent = state.friendlyNames
+    ? friendlyProjectName(session.cwd)
+    : (session.cwd ?? "(unknown)");
+  cwdVal.title = session.cwd
+    ? `${session.cwd} (best-effort decoded; encoding is ambiguous)`
+    : "Best-effort decoded project directory (encoding is ambiguous)";
   cwdRow.append(cwdLabel, cwdVal);
 
   // Resume command.
@@ -2320,6 +2379,7 @@ async function loadProjects() {
     body.innerHTML = `<div class="projects-error">Failed to load projects: ${escapeHtml(e.message)}</div>`;
     return;
   }
+  state.lastProjects = projects; // cache so the name-mode toggle can re-render
   renderProjects(projects, body);
 }
 
@@ -2369,8 +2429,10 @@ function renderProjectCard(proj) {
 
   const cwd = document.createElement("span");
   cwd.className = "project-cwd";
-  cwd.textContent = proj.cwd; // textContent — never innerHTML with untrusted paths
-  cwd.title = proj.cwd;
+  // Friendly project name vs full decoded cwd, per the global names mode.
+  cwd.textContent = state.friendlyNames ? friendlyProjectName(proj.cwd) : proj.cwd;
+  cwd.title = proj.cwd; // full path always available on hover
+  cwd.dataset.cwd = proj.cwd;
 
   const badge = document.createElement("span");
   badge.className = `project-badge ${proj.exists ? "exists" : "missing"}`;
@@ -3087,7 +3149,10 @@ function renderUsageDashboard(data) {
   // ---------- sessions per project (horizontal bars) ----------
   const projectItems = (data.sessionsPerProject ?? [])
     .slice(0, 20)
-    .map((/** @type {{project:string,count:number}} */ p) => ({ label: p.project, count: p.count }));
+    .map((/** @type {{project:string,count:number}} */ p) => ({
+      label: state.friendlyNames ? friendlyProjectName(p.project) : p.project,
+      count: p.count,
+    }));
   const projectChartHtml =
     `<div class="usage-section">` +
     `<div class="usage-section-title">Sessions per Project</div>` +
@@ -3146,6 +3211,7 @@ async function openUsageDashboard() {
   genAt.textContent = "";
   try {
     const data = await api("/api/usage");
+    state.lastUsage = data; // cache so the name-mode toggle can re-render
     body.innerHTML = renderUsageDashboard(data);
     if (data.generatedAt) {
       genAt.textContent = `as of ${new Date(data.generatedAt).toLocaleTimeString()}`;
@@ -3199,6 +3265,12 @@ async function init() {
   // Restore live-watch pause preference.
   state.watchPaused = localStorage.getItem("watchPaused") === "1";
   applyWatchToggle();
+
+  // Restore name-mode preference (friendly by default).
+  state.friendlyNames = localStorage.getItem("friendlyNames") !== "0";
+  updateNamesToggle();
+  const friendlyCb = /** @type {HTMLInputElement|null} */ ($("#graph-friendly"));
+  if (friendlyCb) friendlyCb.checked = state.friendlyNames;
 
   await buildTree();
 
@@ -3385,6 +3457,8 @@ async function init() {
   for (const id of ["graph-layout", "graph-kind", "graph-topn", "graph-hidetiny"]) {
     $("#" + id).addEventListener("change", () => rebuildGraph());
   }
+  // Friendly-names checkbox shares the global mode; only labels change (no relayout).
+  $("#graph-friendly").addEventListener("change", (e) => setFriendlyNames(e.target.checked));
   let searchTimer = null;
   $("#graph-search").addEventListener("input", (e) => {
     clearTimeout(searchTimer);
@@ -3464,8 +3538,18 @@ const GRAPH_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 /** Decode an encoded project dir ("-home-a--b-proj") to a short label. */
 function graphProjShort(enc) {
-  const segs = enc.replace(/^-/, "").split("-").filter(Boolean);
-  return segs.slice(-2).join("-") || enc;
+  return friendlyProjectName(enc);
+}
+
+/**
+ * The label to draw for a graph node, honouring the friendly/UUID name mode.
+ * File nodes always show their kind; UUID hubs show the friendly project name
+ * (or a short id) in friendly mode, or the full UUID in UUID mode.
+ */
+function nodeDisplayLabel(nd) {
+  if (nd.type !== "uuid") return nd.label;
+  if (state.friendlyNames) return `⬢ ${nd.proj || nd.id.slice(0, 8)}`;
+  return `⬢ ${nd.id}`;
 }
 
 /** Human, descriptive label for a file node derived from its root-relative path. */
@@ -3545,6 +3629,8 @@ async function openGraph() {
     return;
   }
   gs.raw = data;
+  const friendlyCb = /** @type {HTMLInputElement|null} */ ($("#graph-friendly"));
+  if (friendlyCb) friendlyCb.checked = state.friendlyNames;
   $("#graph-loading").classList.add("hidden");
   rebuildGraph();
 }
@@ -3637,15 +3723,15 @@ function rebuildGraph() {
 
   // Descriptive labels (files by kind; hubs by short id → project name).
   for (const nd of gs.nodes) {
-    if (nd.type === "file") { nd.full = nd.path; nd.label = graphFileLabel(nd.path); }
-    else { nd.full = nd.id; nd.label = `⬢ ${nd.id.slice(0, 8)}`; }
+    if (nd.type === "file") { nd.full = nd.path; nd.label = graphFileLabel(nd.path); nd.proj = null; }
+    else { nd.full = nd.id; nd.label = nd.id; nd.proj = null; } // proj filled below if known
   }
   for (const { a, b } of gs.links) {
     const hub = a.type === "uuid" ? a : b.type === "uuid" ? b : null;
     const file = a.type === "file" ? a : b.type === "file" ? b : null;
     if (hub && file && file.path && file.path.startsWith("projects/")) {
       const enc = file.path.split("/")[1] || "";
-      if (enc) hub.label = `⬢ ${graphProjShort(enc)}`;
+      if (enc) hub.proj = friendlyProjectName(enc);
     }
   }
 
@@ -3754,7 +3840,7 @@ function focusGraphSearch(query) {
   if (!q) { gs.focusCluster = null; input.classList.remove("nomatch"); scheduleGraphDraw(); return; }
   let best = null;
   for (const nd of gs.nodes) {
-    const hay = `${nd.label} ${nd.full || ""} ${nd.path || ""}`.toLowerCase();
+    const hay = `${nd.proj || ""} ${nd.label} ${nd.full || ""} ${nd.path || ""}`.toLowerCase();
     if (!hay.includes(q)) continue;
     if (!best || (nd.type === "uuid" && best.type !== "uuid") || nd.degree > best.degree) best = nd;
   }
@@ -3917,7 +4003,8 @@ function drawGraph() {
     if (!want) continue;
     if (focus != null && nd.cluster !== focus && nd !== gs.hovered) continue;
     const r = nodeR(nd);
-    const lbl = nd.label.length > 24 ? nd.label.slice(0, 12) + "…" + nd.label.slice(-8) : nd.label;
+    const raw = nodeDisplayLabel(nd);
+    const lbl = raw.length > 24 ? raw.slice(0, 12) + "…" + raw.slice(-8) : raw;
     const lw = ctx.measureText(lbl).width;
     const sx = cx + nd.x * gs.scale;
     const sy = cy + (nd.y + r + 3) * gs.scale;
@@ -4082,8 +4169,8 @@ function setupGraphCanvas() {
       if (!gs.rafId) gs.rafId = requestAnimationFrame(() => { drawGraph(); gs.rafId = null; });
     }
     if (nd) {
-      // Descriptive label + full path/UUID underneath.
-      const label = nd.full ? `${nd.label}\n${nd.full}` : nd.label;
+      // Display label + full path/UUID underneath.
+      const label = nd.full ? `${nodeDisplayLabel(nd)}\n${nd.full}` : nodeDisplayLabel(nd);
       tooltip.textContent = label;
       tooltip.classList.remove("hidden");
       const tw = tooltip.offsetWidth || 200;
@@ -4624,9 +4711,19 @@ function ymdParts(label) {
   });
   for (const item of menu.querySelectorAll(".views-item")) {
     item.addEventListener("click", () => {
+      if (!item.dataset.target) return; // non-navigation items (e.g. the names toggle)
       const target = document.querySelector(item.dataset.target);
       close();
       if (target) target.click(); // reuse the feature's own open/close handler
+    });
+  }
+  // Names mode toggle — flips friendly/UUID, persists, and re-renders open views
+  // without closing the menu (so the change is visible).
+  const namesToggle = document.getElementById("names-toggle");
+  if (namesToggle) {
+    namesToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setFriendlyNames(!state.friendlyNames);
     });
   }
   // Dismiss on outside click or Escape.

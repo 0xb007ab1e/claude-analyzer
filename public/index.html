@@ -26,6 +26,8 @@
           <button class="views-item" role="menuitem" data-target="#timeline-toggle">📅 Activity timeline</button>
           <button class="views-item" role="menuitem" data-target="#graph-toggle">🕸 Relationship graph</button>
           <button class="views-item" role="menuitem" data-target="#audit-toggle">🛡 Security audit</button>
+          <div class="views-sep"></div>
+          <button class="views-item names-toggle" id="names-toggle" role="menuitemcheckbox" aria-checked="true" title="Toggle between friendly project-derived names and raw UUIDs / paths across the graph, Projects, Usage, and session viewer">🏷 <span class="names-toggle-label">Names: Friendly</span></button>
         </div>
       </div>
 
@@ -271,6 +273,7 @@
           </select>
         </label>
         <label class="graph-ctl"><input id="graph-hidetiny" type="checkbox" /> Hide size&lt;3</label>
+        <label class="graph-ctl"><input id="graph-friendly" type="checkbox" checked /> Friendly names</label>
       </div>
       <canvas id="graph-canvas" class="graph-canvas" tabindex="0" aria-label="Force-directed relationship graph"></canvas>
       <div id="graph-tooltip" class="graph-tooltip hidden"></div>

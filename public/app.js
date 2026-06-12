@@ -4879,4 +4879,259 @@ function ymdParts(label) {
   });
 })();
 
+// ---------------------------------------------------------------------------
+// Observability dashboard — server RED metrics + persistent .claude usage
+// history. Reuses the timeline's heatmap / hour-chart components, since the
+// /api/observability aggregate exposes the same `days` / `byHour` shapes.
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch and render the observability dashboard.
+ *
+ * @param {number} days - History window (1–365).
+ */
+async function loadObservability(days) {
+  const body = $("#obs-body");
+  body.innerHTML = '<div class="timeline-loading">Loading…</div>';
+  let data;
+  try {
+    data = await api(`/api/observability?days=${encodeURIComponent(days)}`);
+  } catch (e) {
+    body.innerHTML = `<div class="timeline-loading">Error: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  body.innerHTML = "";
+  body.appendChild(renderObservability(data));
+}
+
+/** Format a byte count as a compact human string. */
+function obsBytes(n) {
+  if (!n) return "—";
+  const u = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+}
+
+/** Format a millisecond duration as `Xd Yh`, `Yh Zm`, or `Zm Ss`. */
+function obsDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s % 60}s`;
+}
+
+/** Relative "time ago" for an epoch-ms timestamp. */
+function obsAgo(ts) {
+  const diff = Math.max(0, Date.now() - ts);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/**
+ * Build the observability DOM from an /api/observability response.
+ *
+ * @param {object} data - { aggregate, recent, metrics, journalDir }.
+ * @returns {HTMLElement}
+ */
+function renderObservability(data) {
+  const m = data.metrics || {};
+  const agg = data.aggregate || { days: [], byHour: [], byKind: {}, topPaths: [], total: 0 };
+  const wrap = document.createElement("div");
+  wrap.className = "tl-wrap";
+
+  /** A labelled stat card. */
+  const stat = (label, value, hint) => {
+    const cell = document.createElement("div");
+    cell.className = "tl-stat";
+    const l = document.createElement("div");
+    l.className = "tl-stat-label";
+    l.textContent = label;
+    const v = document.createElement("div");
+    v.className = "tl-stat-value";
+    v.textContent = value;
+    cell.append(l, v);
+    if (hint) {
+      const h = document.createElement("div");
+      h.className = "obs-stat-hint";
+      h.textContent = hint;
+      cell.appendChild(h);
+    }
+    return cell;
+  };
+
+  /** A titled section wrapper. */
+  const section = (title, node) => {
+    const sec = document.createElement("div");
+    sec.className = "tl-section";
+    const t = document.createElement("div");
+    t.className = "tl-section-title";
+    t.textContent = title;
+    sec.append(t, node);
+    return sec;
+  };
+
+  // --- Server health (RED) --------------------------------------------------
+  const lat = m.latency || { avgMs: 0, p95Ms: 0, maxMs: 0 };
+  const red = document.createElement("div");
+  red.className = "tl-stats";
+  red.append(
+    stat("Requests", (m.requests ?? 0).toLocaleString()),
+    stat("Error rate", `${(((m.errorRate ?? 0) * 100)).toFixed(1)}%`),
+    stat("Latency avg", `${(lat.avgMs ?? 0).toFixed(1)} ms`, `p95 ${lat.p95Ms ?? 0} ms · max ${Math.round(lat.maxMs ?? 0)} ms`),
+    stat("Uptime", obsDuration(m.uptimeMs ?? 0)),
+    stat("Memory (RSS)", obsBytes(m.rssBytes ?? 0)),
+  );
+  wrap.appendChild(section("Server health (since boot)", red));
+
+  // --- Event counters -------------------------------------------------------
+  const counters = m.counters || {};
+  const counterDefs = [
+    ["fschange", "File changes"],
+    ["reveal", "Secret reveals"],
+    ["write", "Writes"],
+    ["restore", "Restores"],
+    ["audit", "Audit events"],
+    ["error", "Errors"],
+  ];
+  const cRow = document.createElement("div");
+  cRow.className = "tl-stats";
+  for (const [key, label] of counterDefs) {
+    cRow.appendChild(stat(label, (counters[key] ?? 0).toLocaleString()));
+  }
+  wrap.appendChild(section("Activity counters (since boot)", cRow));
+
+  // --- History charts (reused from the activity timeline) -------------------
+  const heat = document.createElement("div");
+  heat.appendChild(renderHeatmap(agg.days));
+  heat.appendChild(renderHeatmapLegend(agg.days));
+  wrap.appendChild(section(`Events per day · ${agg.total.toLocaleString()} in window`, heat));
+  wrap.appendChild(section("Events by hour of day (UTC)", renderHourChart(agg.byHour)));
+
+  // --- Event kinds ----------------------------------------------------------
+  const kinds = Object.entries(agg.byKind).sort((a, b) => b[1] - a[1]);
+  if (kinds.length) {
+    const maxK = kinds[0][1] || 1;
+    const list = document.createElement("div");
+    list.className = "obs-bars";
+    for (const [kind, count] of kinds) {
+      const row = document.createElement("div");
+      row.className = "obs-bar-row";
+      const name = document.createElement("span");
+      name.className = "obs-bar-label";
+      name.textContent = kind;
+      const track = document.createElement("span");
+      track.className = "obs-bar-track";
+      const fill = document.createElement("span");
+      fill.className = `obs-bar-fill kind-${escapeHtml(kind)}`;
+      fill.style.width = `${Math.max(3, (count / maxK) * 100)}%`;
+      track.appendChild(fill);
+      const val = document.createElement("span");
+      val.className = "obs-bar-value";
+      val.textContent = count.toLocaleString();
+      row.append(name, track, val);
+      list.appendChild(row);
+    }
+    wrap.appendChild(section("Event kinds", list));
+  }
+
+  // --- Most active paths ----------------------------------------------------
+  if (agg.topPaths.length) {
+    const list = document.createElement("div");
+    list.className = "obs-paths";
+    for (const p of agg.topPaths) {
+      const row = document.createElement("div");
+      row.className = "obs-path-row";
+      const a = document.createElement("button");
+      a.className = "obs-path-link";
+      a.textContent = p.path;
+      a.title = `Open ${p.path}`;
+      a.addEventListener("click", () => openFile(p.path, false));
+      const c = document.createElement("span");
+      c.className = "obs-path-count";
+      c.textContent = p.count.toLocaleString();
+      row.append(a, c);
+      list.appendChild(row);
+    }
+    wrap.appendChild(section("Most active paths", list));
+  }
+
+  // --- Recent events --------------------------------------------------------
+  if (data.recent && data.recent.length) {
+    const list = document.createElement("div");
+    list.className = "obs-events";
+    for (const ev of data.recent) {
+      const row = document.createElement("div");
+      row.className = "obs-event-row";
+      const badge = document.createElement("span");
+      badge.className = `obs-event-kind kind-${escapeHtml(ev.kind)}`;
+      badge.textContent = ev.op ? `${ev.kind}:${ev.op}` : ev.kind;
+      const detail = document.createElement("span");
+      detail.className = "obs-event-detail";
+      detail.textContent = ev.path || ev.msg || "";
+      detail.title = detail.textContent;
+      const when = document.createElement("span");
+      when.className = "obs-event-when";
+      when.textContent = obsAgo(ev.ts);
+      row.append(badge, detail, when);
+      list.appendChild(row);
+    }
+    wrap.appendChild(section("Recent events", list));
+  }
+
+  // --- Footer ---------------------------------------------------------------
+  const note = document.createElement("div");
+  note.className = "tl-note";
+  note.textContent = `Persistent journal: ${data.journalDir || "—"} · metadata only (paths, kinds), never file contents.`;
+  wrap.appendChild(note);
+
+  return wrap;
+}
+
+// Wire up the observability overlay (mirrors setupTimeline).
+(function setupObservability() {
+  const overlay = /** @type {HTMLElement} */ (document.getElementById("obs-overlay"));
+  const toggleBtn = /** @type {HTMLElement} */ (document.getElementById("obs-toggle"));
+  const closeBtn = /** @type {HTMLElement} */ (document.getElementById("obs-close"));
+  const refreshBtn = /** @type {HTMLElement} */ (document.getElementById("obs-refresh"));
+  const daysSelect = /** @type {HTMLSelectElement} */ (document.getElementById("obs-days"));
+  if (!overlay || !toggleBtn || !closeBtn || !daysSelect) return;
+
+  const days = () => parseInt(daysSelect.value, 10) || 30;
+  function open() {
+    overlay.classList.remove("hidden");
+    toggleBtn.setAttribute("aria-expanded", "true");
+    loadObservability(days());
+  }
+  function close() {
+    overlay.classList.add("hidden");
+    toggleBtn.setAttribute("aria-expanded", "false");
+  }
+  toggleBtn.addEventListener("click", () => {
+    if (overlay.classList.contains("hidden")) open();
+    else close();
+  });
+  closeBtn.addEventListener("click", close);
+  if (refreshBtn) refreshBtn.addEventListener("click", () => loadObservability(days()));
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.classList.contains("hidden")) close();
+  });
+  daysSelect.addEventListener("change", () => loadObservability(days()));
+})();
+
 init();

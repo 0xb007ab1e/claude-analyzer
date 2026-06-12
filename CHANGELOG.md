@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-06-12
+
+### Added
+
+- **Live file-tree cache.** An in-memory `path → mtime` index, built once and
+  kept current incrementally from the filesystem-watch events, now backs the
+  relationship graph and activity timeline — so those views render without
+  re-walking the whole tree on every request (~20 ms vs. a full 20k-file walk).
+  Guarded against watcher drift by a 5-minute TTL rebuild and a forced rebuild
+  on watch error.
+
+### Fixed
+
+- The file tree no longer shows stale contents for a directory that changed
+  while it was **collapsed**: such a directory is now reloaded the next time it
+  is expanded (previously only currently-expanded directories were reconciled
+  live).
+
+### Changed
+
+- Removed the per-request full tree walk (`walkFiles`/`collectMtimes`) from the
+  graph and activity endpoints in favour of the cache.
+
 ## [0.1.7] - 2026-06-12
 
 ### Added
@@ -149,6 +172,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.8]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.8
 [0.1.7]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.7
 [0.1.6]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.6
 [0.1.5]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.5

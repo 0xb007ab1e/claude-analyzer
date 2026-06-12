@@ -192,4 +192,6 @@ Type-checking gate (optional, requires installing TypeScript):
 
 ## License
 
-MIT
+[0BSD](LICENSE) (BSD Zero Clause License) — public-domain-equivalent: use, copy,
+modify, and distribute freely, no attribution required. The project has zero
+runtime dependencies, so there are no third-party license obligations.

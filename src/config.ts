@@ -10,7 +10,7 @@
  * clear message rather than booting onto a non-existent directory.
  */
 
-import { realpathSync, statSync } from "node:fs";
+import { realpathSync, statSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +71,12 @@ export interface Config {
    * few conventional locations (see {@link detectSourceDir}); `null` if none.
    */
   sourceDir: string | null;
+  /**
+   * Optional bearer token required on every `/api/*` request (defense in depth
+   * for non-loopback binds). `null` disables auth (the default). Resolved from
+   * `CA_TOKEN` (preferred), `--token-file <path>`, or `--token <value>`.
+   */
+  token: string | null;
 }
 
 /** A configuration problem that should stop startup with a friendly message. */
@@ -98,7 +104,31 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const rawSource = flags.source ?? env.CLAUDE_SRC ?? detectSourceDir(env);
   const sourceDir = rawSource ? validateSourceDir(rawSource) : null;
 
-  return { root, host, port, allowWrite, allowedHosts, reload, sourceDir };
+  const token = resolveToken(flags, env);
+
+  return { root, host, port, allowWrite, allowedHosts, reload, sourceDir, token };
+}
+
+/**
+ * Resolve the optional API token. Precedence: `CA_TOKEN` env (preferred — not
+ * visible in process listings), then `--token-file <path>` (read + trimmed),
+ * then `--token <value>` (convenience; visible in `ps`/shell history, so a
+ * warning is emitted by the caller). An empty/whitespace value disables auth.
+ *
+ * @throws ConfigError if `--token-file` is given but cannot be read.
+ */
+function resolveToken(flags: ParsedFlags, env: NodeJS.ProcessEnv): string | null {
+  let raw: string | undefined = env.CA_TOKEN;
+  if (raw === undefined && flags.tokenFile !== undefined) {
+    try {
+      raw = readFileSync(flags.tokenFile, "utf8");
+    } catch {
+      throw new ConfigError(`Cannot read --token-file: ${flags.tokenFile}`);
+    }
+  }
+  if (raw === undefined) raw = flags.token;
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : null;
 }
 
 /**
@@ -176,6 +206,10 @@ interface ParsedFlags {
   allowHost: string[];
   /** Path to the Claude Code source tree for the xref feature. */
   source?: string;
+  /** Inline API token (convenience; prefer CA_TOKEN). */
+  token?: string;
+  /** Path to a file containing the API token. */
+  tokenFile?: string;
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -208,12 +242,20 @@ function parseFlags(argv: string[]): ParsedFlags {
       case "--source":
         out.source = requireValue(argv, ++i, "--source");
         break;
+      case "--token":
+        out.token = requireValue(argv, ++i, "--token");
+        break;
+      case "--token-file":
+        out.tokenFile = requireValue(argv, ++i, "--token-file");
+        break;
       default:
         if (a?.startsWith("--root=")) out.root = a.slice("--root=".length);
         else if (a?.startsWith("--host=")) out.host = a.slice("--host=".length);
         else if (a?.startsWith("--port=")) out.port = a.slice("--port=".length);
         else if (a?.startsWith("--allow-host=")) out.allowHost.push(a.slice("--allow-host=".length));
         else if (a?.startsWith("--source=")) out.source = a.slice("--source=".length);
+        else if (a?.startsWith("--token=")) out.token = a.slice("--token=".length);
+        else if (a?.startsWith("--token-file=")) out.tokenFile = a.slice("--token-file=".length);
     }
   }
   return out;

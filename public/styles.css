@@ -2812,3 +2812,18 @@ tr.sev-info   td { color: var(--text); }
 @media (max-width: 640px) {
   .search-hit { grid-template-columns: 40px 1fr; }
 }
+
+/* Access-token unlock input (reuses .modal / .modal-box / .modal-actions). */
+.auth-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.auth-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }

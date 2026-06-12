@@ -263,6 +263,18 @@
       </div>
     </div>
 
+    <!-- Access-token unlock (shown only when the server requires a token) -->
+    <div id="auth-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <div class="modal-box">
+        <h2 id="auth-title">🔒 Access token required</h2>
+        <p id="auth-msg">This server requires an access token.</p>
+        <input id="auth-input" class="auth-input" type="password" autocomplete="off" aria-label="Access token" placeholder="Paste token…" />
+        <div class="modal-actions">
+          <button id="auth-unlock" class="btn primary">Unlock</button>
+        </div>
+      </div>
+    </div>
+
     <div id="confirm" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-box">
         <h2 id="confirm-title">Confirm</h2>

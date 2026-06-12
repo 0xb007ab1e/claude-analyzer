@@ -77,8 +77,36 @@ function applyNameMode() {
 // API helpers
 // ---------------------------------------------------------------------------
 
+/** In-memory API token (never persisted). Set via the unlock prompt on a 401. */
+let authToken = "";
+
+/** Authorization header for fetches when a token is set. */
+function authHeaders() {
+  return authToken ? { authorization: "Bearer " + authToken } : {};
+}
+
+/**
+ * Append the token as a query param for URLs that can't carry an Authorization
+ * header — EventSource, and <img>/<embed>/download `src`/`href`.
+ */
+function withToken(url) {
+  if (!authToken) return url;
+  return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(authToken);
+}
+
+/** A 401 error tagged with `.status` so boot() and callers can detect it. */
+function authError() {
+  const e = new Error("unauthorized — access token required");
+  e.status = 401;
+  return e;
+}
+
 async function api(path) {
-  const res = await fetch(path, { headers: { accept: "application/json" } });
+  const res = await fetch(path, { headers: { accept: "application/json", ...authHeaders() } });
+  if (res.status === 401) {
+    promptToken("This server requires an access token.");
+    throw authError();
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
@@ -87,9 +115,13 @@ async function api(path) {
 async function apiPost(path, body) {
   const res = await fetch(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
+  if (res.status === 401) {
+    promptToken("This server requires an access token.");
+    throw authError();
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
@@ -361,7 +393,8 @@ function renderContent(data) {
 function renderBinaryViewer(data) {
   const wrap = document.createElement("div");
   wrap.className = "binary-view";
-  const rawUrl = `/api/raw?path=${encodeURIComponent(data.path)}`;
+  // Token (if any) rides as a query param — <img>/<embed>/<a download> can't set headers.
+  const rawUrl = withToken(`/api/raw?path=${encodeURIComponent(data.path)}`);
 
   // Toolbar: note + open/download links.
   const bar = document.createElement("div");
@@ -731,7 +764,7 @@ function saveEdit() {
  */
 function setupEvents(cfg) {
   let bootId = null;
-  const es = new EventSource("/api/events");
+  const es = new EventSource(withToken("/api/events"));
   // Reload only when the server's boot id changes (a real restart), NOT on a
   // plain reconnect — otherwise a flaky mobile/Tailscale link reloads the whole
   // UI constantly. A network blip reconnects with the same boot id → no reload.
@@ -5594,4 +5627,71 @@ function renderSearchFile(f, query) {
   });
 })();
 
-init();
+// ---------------------------------------------------------------------------
+// Access-token unlock (only when the server requires a token)
+// ---------------------------------------------------------------------------
+
+let pendingTokenPrompt = null;
+
+/**
+ * Show the access-token modal and resolve once the user submits a non-empty
+ * token (stored in memory only). Idempotent: concurrent callers share one
+ * prompt/promise so a burst of 401s doesn't stack modals.
+ *
+ * @param {string} [message] - Optional explanatory message.
+ * @returns {Promise<void>}
+ */
+function promptToken(message) {
+  const modal = document.getElementById("auth-modal");
+  const input = /** @type {HTMLInputElement} */ (document.getElementById("auth-input"));
+  const msg = document.getElementById("auth-msg");
+  if (!modal || !input) return Promise.resolve();
+  if (message && msg) msg.textContent = message;
+  modal.classList.remove("hidden");
+  input.value = "";
+  input.focus();
+  if (pendingTokenPrompt) return pendingTokenPrompt;
+
+  pendingTokenPrompt = new Promise((resolve) => {
+    const btn = document.getElementById("auth-unlock");
+    const submit = () => {
+      const v = input.value.trim();
+      if (!v) return;
+      authToken = v; // in memory only — never persisted
+      modal.classList.add("hidden");
+      btn?.removeEventListener("click", submit);
+      input.removeEventListener("keydown", onKey);
+      pendingTokenPrompt = null;
+      resolve();
+    };
+    const onKey = (e) => {
+      if (e.key === "Enter") submit();
+    };
+    btn?.addEventListener("click", submit);
+    input.addEventListener("keydown", onKey);
+  });
+  return pendingTokenPrompt;
+}
+
+/**
+ * Entry point: if the server requires a token, prompt until a valid one is
+ * entered, then run the app. With no token configured the probe succeeds
+ * immediately and the prompt never appears.
+ */
+async function boot() {
+  for (let attempts = 0; attempts < 25; attempts++) {
+    try {
+      await api("/api/config"); // 200 → authed or auth disabled
+      break;
+    } catch (e) {
+      if (e && e.status === 401) {
+        await promptToken("This server requires an access token.");
+        continue; // retry with the freshly-entered token
+      }
+      break; // a different error — let init() surface it
+    }
+  }
+  await init();
+}
+
+boot();

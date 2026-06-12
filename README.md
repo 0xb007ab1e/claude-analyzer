@@ -161,6 +161,7 @@ restarts and the browser reloads on reconnect. Disable with `--no-reload`.
 | `--allow-host <h>` / `ALLOW_HOST` | hostname + loopback | Extra `Host` values to accept (repeatable; `ALLOW_HOST` is comma-separated) |
 | `--read-only` | off | Disable all writes (browse-only) |
 | `--no-reload` | reload on | Disable the live-reload SSE endpoint |
+| `CA_TOKEN` / `--token-file <path>` / `--token <v>` | none | Require a bearer **access token** on every `/api/*` request (prefer `CA_TOKEN` or a file — `--token` is visible in process listings) |
 
 ## Security model
 
@@ -185,6 +186,13 @@ secrets, so its safety properties are explicit and tested:
   rejects any request whose `Host` header isn't on the allowlist (loopback +
   the machine hostname + any `--allow-host`). Binding `0.0.0.0` makes it
   reachable by hostname (e.g. `parrot`) while still rejecting unknown hosts.
+- **Optional access token (defense in depth).** Set `CA_TOKEN` (or
+  `--token-file`) to require a bearer token on every `/api/*` request — useful
+  when binding to a LAN/Tailscale interface, so a Host-allowlist match alone
+  isn't enough. The static UI shell still loads and prompts for the token (held
+  in memory, never persisted); it rides as an `Authorization: Bearer` header, or
+  a `?token=` query for `EventSource` / `<img>`/`<embed>`. Comparison is
+  constant-time. Auth is **off by default** (loopback use needs no token).
 - **No secrets in code or logs.** Reveal actions log only the file path, never
   the values.
 

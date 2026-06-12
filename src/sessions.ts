@@ -98,3 +98,33 @@ export function sessionInfo(rel: string): SessionInfo {
     uuid: sessionUuid(rel),
   };
 }
+
+/**
+ * Extract the real working directory from a session transcript's JSONL text.
+ *
+ * Claude Code records the actual `cwd` on session records, so this is the
+ * reliable source of a project's path — unlike {@link decodeProjectCwd}, which
+ * must guess (the `projects/` directory encoding maps `/`, `_`, and literal `-`
+ * all to `-` and so is not reversible). Scans the first `maxLines` records for
+ * the first one carrying a non-empty string `cwd`.
+ *
+ * @param jsonlText  Raw `.jsonl` content (or a leading chunk of it).
+ * @param maxLines   Max lines to scan (default 200); the cwd appears early.
+ * @returns          The recorded cwd, or `null` if none is found.
+ */
+export function extractSessionCwd(jsonlText: string, maxLines = 200): string | null {
+  const lines = jsonlText.split("\n");
+  const limit = Math.min(lines.length, maxLines);
+  for (let i = 0; i < limit; i++) {
+    const line = (lines[i] ?? "").trim();
+    if (line === "" || line[0] !== "{") continue;
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (obj && typeof obj.cwd === "string" && obj.cwd) return obj.cwd;
+  }
+  return null;
+}

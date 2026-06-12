@@ -4572,7 +4572,7 @@ function heatLevel(count, thresholds) {
  * @param {Array<{date:string,count:number}>} days - sorted ascending.
  * @returns {HTMLElement}
  */
-function renderHeatmap(days) {
+function renderHeatmap(days, onDayClick) {
   const thresholds = computeHeatThresholds(days);
 
   // Build a map: YYYY-MM-DD → {count, level}.
@@ -4655,6 +4655,12 @@ function renderHeatmap(days) {
         cell.className = `tl-cell tl-cell-${level}`;
         const countVal = info ? info.count : 0;
         cell.setAttribute("aria-label", `${label} · ${countVal} change${countVal !== 1 ? "s" : ""}`);
+        cell.dataset.date = label;
+        // Optional drill-down: invoke the callback (in addition to the tooltip).
+        if (typeof onDayClick === "function") {
+          cell.style.cursor = "pointer";
+          cell.addEventListener("click", () => onDayClick(label, countVal));
+        }
         // Tooltip on hover.
         cell.addEventListener("mouseenter", (e) => {
           tooltip.textContent = `${escapeHtml(label)} · ${countVal.toLocaleString()} change${countVal !== 1 ? "s" : ""}`;
@@ -4946,55 +4952,344 @@ function obsAgo(ts) {
  * @param {object} data - { aggregate, recent, metrics, journalDir }.
  * @returns {HTMLElement}
  */
+/** Absolute short timestamp label for a drill row. */
+function obsTime(ts) {
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** A labelled stat card; if `onClick` is given the card becomes interactive. */
+function obsStat(label, value, hint, onClick) {
+  const cell = document.createElement("div");
+  cell.className = "tl-stat" + (onClick ? " obs-stat-click" : "");
+  const l = document.createElement("div");
+  l.className = "tl-stat-label";
+  l.textContent = label;
+  const v = document.createElement("div");
+  v.className = "tl-stat-value";
+  v.textContent = value;
+  cell.append(l, v);
+  if (hint) {
+    const h = document.createElement("div");
+    h.className = "obs-stat-hint";
+    h.textContent = hint;
+    cell.appendChild(h);
+  }
+  if (onClick) {
+    cell.tabIndex = 0;
+    cell.addEventListener("click", onClick);
+    cell.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    });
+  }
+  return cell;
+}
+
+/** A titled section wrapper. */
+function obsSection(title, node) {
+  const sec = document.createElement("div");
+  sec.className = "tl-section";
+  const t = document.createElement("div");
+  t.className = "tl-section-title";
+  t.textContent = title;
+  sec.append(t, node);
+  return sec;
+}
+
+/** Latency histogram (one bar per bucket). */
+function renderLatencyHistogram(latency) {
+  const buckets = latency.buckets || [];
+  const max = Math.max(1, ...buckets.map((b) => b.count || 0));
+  const list = document.createElement("div");
+  list.className = "obs-bars";
+  buckets.forEach((b, i) => {
+    const row = document.createElement("div");
+    row.className = "obs-bar-row";
+    const name = document.createElement("span");
+    name.className = "obs-bar-label";
+    const lo = i === 0 ? 0 : buckets[i - 1].leMs;
+    name.textContent = b.leMs === null ? `> ${lo} ms` : `≤ ${b.leMs} ms`;
+    const track = document.createElement("span");
+    track.className = "obs-bar-track";
+    const fill = document.createElement("span");
+    fill.className = "obs-bar-fill";
+    fill.style.width = `${b.count ? Math.max(3, (b.count / max) * 100) : 0}%`;
+    track.appendChild(fill);
+    const val = document.createElement("span");
+    val.className = "obs-bar-value";
+    val.textContent = (b.count || 0).toLocaleString();
+    row.append(name, track, val);
+    list.appendChild(row);
+  });
+  return list;
+}
+
+/** Status-class distribution: a stacked bar + a legend. */
+function renderStatusBar(byClass, total) {
+  const wrap = document.createElement("div");
+  const bar = document.createElement("div");
+  bar.className = "obs-status-bar";
+  const legend = document.createElement("div");
+  legend.className = "obs-status-legend";
+  const sum = total || Object.values(byClass).reduce((s, n) => s + n, 0) || 1;
+  for (const cls of ["2xx", "3xx", "4xx", "5xx", "other"]) {
+    const n = byClass[cls] || 0;
+    if (!n) continue;
+    const seg = document.createElement("span");
+    seg.className = `obs-status-seg cls-${cls}`;
+    seg.style.width = `${(n / sum) * 100}%`;
+    seg.title = `${cls}: ${n}`;
+    bar.appendChild(seg);
+    const li = document.createElement("span");
+    li.className = "obs-status-li";
+    const dot = document.createElement("span");
+    dot.className = `obs-status-dot cls-${cls}`;
+    li.append(dot, document.createTextNode(`${cls} ${n.toLocaleString()} (${((n / sum) * 100).toFixed(0)}%)`));
+    legend.appendChild(li);
+  }
+  wrap.append(bar, legend);
+  return wrap;
+}
+
+/** Per-route KPI table; clicking a row drills into that route's breakdown. */
+function renderRouteTable(byRoute, totalReq) {
+  const rows = Object.entries(byRoute).sort((a, b) => b[1].count - a[1].count);
+  const table = document.createElement("table");
+  table.className = "obs-table";
+  const thead = document.createElement("thead");
+  thead.innerHTML =
+    "<tr><th>Route</th><th>Reqs</th><th>Share</th><th>2xx</th><th>4xx</th><th>5xx</th><th>avg</th><th>max</th></tr>";
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const [label, s] of rows) {
+    const tr = document.createElement("tr");
+    tr.className = "obs-table-row";
+    tr.title = "Click for this route's breakdown";
+    const share = totalReq ? `${((s.count / totalReq) * 100).toFixed(0)}%` : "—";
+    const cells = [
+      label,
+      s.count.toLocaleString(),
+      share,
+      (s.byClass["2xx"] || 0).toLocaleString(),
+      (s.byClass["4xx"] || 0).toLocaleString(),
+      (s.byClass["5xx"] || 0).toLocaleString(),
+      `${(s.avgMs || 0).toFixed(1)}ms`,
+      `${Math.round(s.maxMs || 0)}ms`,
+    ];
+    cells.forEach((c, i) => {
+      const td = document.createElement("td");
+      td.textContent = c;
+      if (i === 0) td.className = "obs-table-route";
+      if (i >= 3 && i <= 5 && c !== "0") td.className = `obs-cls-${["2xx", "4xx", "5xx"][i - 3]}`;
+      tr.appendChild(td);
+    });
+    tr.addEventListener("click", () => obsDrillRoute(label, s));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  const scroll = document.createElement("div");
+  scroll.className = "obs-table-scroll";
+  scroll.appendChild(table);
+  return scroll;
+}
+
+/** Remove any open drill-down detail panel. */
+function closeObsDrill() {
+  const ex = document.querySelector("#obs-body .obs-drill");
+  if (ex) ex.remove();
+}
+
+/** Open a drill-down detail panel at the top of the observability body. */
+function openObsDrill(title, bodyNode) {
+  const body = $("#obs-body");
+  if (!body) return;
+  closeObsDrill();
+  const panel = document.createElement("div");
+  panel.className = "obs-drill";
+  const head = document.createElement("div");
+  head.className = "obs-drill-head";
+  const t = document.createElement("span");
+  t.className = "obs-drill-title";
+  t.textContent = title;
+  const x = document.createElement("button");
+  x.className = "btn obs-drill-close";
+  x.textContent = "✕";
+  x.title = "Close detail";
+  x.addEventListener("click", closeObsDrill);
+  head.append(t, x);
+  panel.append(head, bodyNode);
+  body.insertBefore(panel, body.firstChild);
+  panel.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+/** Drill into a single route's metrics (no fetch — derived from the snapshot). */
+function obsDrillRoute(label, s) {
+  const wrap = document.createElement("div");
+  const stats = document.createElement("div");
+  stats.className = "tl-stats";
+  stats.append(
+    obsStat("Requests", s.count.toLocaleString()),
+    obsStat("Avg latency", `${(s.avgMs || 0).toFixed(1)} ms`),
+    obsStat("Max latency", `${Math.round(s.maxMs || 0)} ms`),
+  );
+  wrap.appendChild(stats);
+  wrap.appendChild(renderStatusBar(s.byClass, s.count));
+  openObsDrill(`Route · ${label}`, wrap);
+}
+
+/** Render a fetched journal slice ({events, summary}) into a detail body. */
+function renderEventDrill(resp) {
+  const wrap = document.createElement("div");
+  const s = resp.summary || { count: 0, byKind: {}, byOp: {}, topPaths: [] };
+
+  const stats = document.createElement("div");
+  stats.className = "tl-stats";
+  stats.appendChild(obsStat("Events", (s.count || 0).toLocaleString()));
+  if (s.firstTs) stats.appendChild(obsStat("First", obsTime(s.firstTs)));
+  if (s.lastTs) stats.appendChild(obsStat("Last", obsTime(s.lastTs)));
+  const ops = Object.entries(s.byOp || {});
+  if (ops.length) stats.appendChild(obsStat("Ops", ops.map(([k, v]) => `${k}:${v}`).join("  ")));
+  wrap.appendChild(stats);
+
+  if ((s.topPaths || []).length > 1) {
+    wrap.appendChild(obsSection("Top paths", renderObsPathList(s.topPaths)));
+  }
+
+  const list = document.createElement("div");
+  list.className = "obs-events";
+  for (const ev of resp.events || []) {
+    list.appendChild(renderObsEventRow(ev, true));
+  }
+  if (!(resp.events || []).length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No events match.";
+    list.appendChild(empty);
+  }
+  wrap.appendChild(obsSection(`Events (${(resp.events || []).length})`, list));
+  return wrap;
+}
+
+/** Fetch a journal slice by query params and show it as a drill panel. */
+async function obsDrillFetch(title, params) {
+  const qs = new URLSearchParams(params).toString();
+  const loading = document.createElement("div");
+  loading.className = "empty";
+  loading.textContent = "Loading…";
+  openObsDrill(title, loading);
+  try {
+    const resp = await api(`/api/journal?${qs}`);
+    openObsDrill(title, renderEventDrill(resp));
+  } catch (e) {
+    const err = document.createElement("div");
+    err.className = "empty";
+    err.textContent = `Error: ${e.message}`;
+    openObsDrill(title, err);
+  }
+}
+
+/** A clickable list of {path,count} rows (open-file on click). */
+function renderObsPathList(paths) {
+  const list = document.createElement("div");
+  list.className = "obs-paths";
+  for (const p of paths) {
+    const row = document.createElement("div");
+    row.className = "obs-path-row";
+    const a = document.createElement("button");
+    a.className = "obs-path-link";
+    a.textContent = p.path;
+    a.title = `Open ${p.path}`;
+    a.addEventListener("click", () => openFile(p.path, false));
+    const hist = document.createElement("button");
+    hist.className = "obs-path-hist";
+    hist.textContent = "⤵ history";
+    hist.title = "Show this path's event history";
+    hist.addEventListener("click", () =>
+      obsDrillFetch(`Path history · ${p.path}`, { path: p.path, limit: "500" }),
+    );
+    const c = document.createElement("span");
+    c.className = "obs-path-count";
+    c.textContent = p.count.toLocaleString();
+    row.append(a, hist, c);
+    list.appendChild(row);
+  }
+  return list;
+}
+
+/** A single event row; when `clickable`, the path opens the file. */
+function renderObsEventRow(ev, clickable) {
+  const row = document.createElement("div");
+  row.className = "obs-event-row";
+  const badge = document.createElement("span");
+  badge.className = `obs-event-kind kind-${escapeHtml(ev.kind)}`;
+  badge.textContent = ev.op ? `${ev.kind}:${ev.op}` : ev.kind;
+  const detail = document.createElement("span");
+  detail.className = "obs-event-detail";
+  detail.textContent = ev.path || ev.msg || "";
+  detail.title = detail.textContent;
+  if (clickable && ev.path) {
+    detail.classList.add("obs-event-link");
+    detail.addEventListener("click", () => openFile(ev.path, false));
+  }
+  const when = document.createElement("span");
+  when.className = "obs-event-when";
+  when.textContent = obsAgo(ev.ts);
+  when.title = obsTime(ev.ts);
+  row.append(badge, detail, when);
+  return row;
+}
+
 function renderObservability(data) {
   const m = data.metrics || {};
   const agg = data.aggregate || { days: [], byHour: [], byKind: {}, topPaths: [], total: 0 };
   const wrap = document.createElement("div");
   wrap.className = "tl-wrap";
 
-  /** A labelled stat card. */
-  const stat = (label, value, hint) => {
-    const cell = document.createElement("div");
-    cell.className = "tl-stat";
-    const l = document.createElement("div");
-    l.className = "tl-stat-label";
-    l.textContent = label;
-    const v = document.createElement("div");
-    v.className = "tl-stat-value";
-    v.textContent = value;
-    cell.append(l, v);
-    if (hint) {
-      const h = document.createElement("div");
-      h.className = "obs-stat-hint";
-      h.textContent = hint;
-      cell.appendChild(h);
-    }
-    return cell;
-  };
-
-  /** A titled section wrapper. */
-  const section = (title, node) => {
-    const sec = document.createElement("div");
-    sec.className = "tl-section";
-    const t = document.createElement("div");
-    t.className = "tl-section-title";
-    t.textContent = title;
-    sec.append(t, node);
-    return sec;
-  };
-
   // --- Server health (RED) --------------------------------------------------
-  const lat = m.latency || { avgMs: 0, p95Ms: 0, maxMs: 0 };
+  const lat = m.latency || { avgMs: 0, p50Ms: 0, p95Ms: 0, p99Ms: 0, maxMs: 0, buckets: [] };
+  const upMin = (m.uptimeMs ?? 0) / 60000;
+  const rpm = upMin > 0 ? (m.requests ?? 0) / upMin : 0;
+  const errPct = (m.errorRate ?? 0) * 100;
   const red = document.createElement("div");
   red.className = "tl-stats";
   red.append(
-    stat("Requests", (m.requests ?? 0).toLocaleString()),
-    stat("Error rate", `${(((m.errorRate ?? 0) * 100)).toFixed(1)}%`),
-    stat("Latency avg", `${(lat.avgMs ?? 0).toFixed(1)} ms`, `p95 ${lat.p95Ms ?? 0} ms · max ${Math.round(lat.maxMs ?? 0)} ms`),
-    stat("Uptime", obsDuration(m.uptimeMs ?? 0)),
-    stat("Memory (RSS)", obsBytes(m.rssBytes ?? 0)),
+    obsStat("Requests", (m.requests ?? 0).toLocaleString()),
+    obsStat("Throughput", `${rpm.toFixed(1)}/min`),
+    obsStat("Success rate", `${(100 - errPct).toFixed(1)}%`),
+    obsStat("Error rate", `${errPct.toFixed(1)}%`),
+    obsStat("Uptime", obsDuration(m.uptimeMs ?? 0)),
+    obsStat("Memory (RSS)", obsBytes(m.rssBytes ?? 0)),
   );
-  wrap.appendChild(section("Server health (since boot)", red));
+  wrap.appendChild(obsSection("Server health (since boot)", red));
+
+  // --- Latency KPIs + histogram --------------------------------------------
+  const latRow = document.createElement("div");
+  latRow.className = "tl-stats";
+  latRow.append(
+    obsStat("Avg", `${(lat.avgMs ?? 0).toFixed(1)} ms`),
+    obsStat("p50", `${lat.p50Ms ?? 0} ms`),
+    obsStat("p95", `${lat.p95Ms ?? 0} ms`),
+    obsStat("p99", `${lat.p99Ms ?? 0} ms`),
+    obsStat("Max", `${Math.round(lat.maxMs ?? 0)} ms`),
+  );
+  const latWrap = document.createElement("div");
+  latWrap.append(latRow, renderLatencyHistogram(lat));
+  wrap.appendChild(obsSection("Request latency", latWrap));
+
+  // --- Status distribution --------------------------------------------------
+  wrap.appendChild(obsSection("Status codes", renderStatusBar(m.byClass || {}, m.requests ?? 0)));
+
+  // --- Requests by route (KPI table, drillable) -----------------------------
+  if (m.byRoute && Object.keys(m.byRoute).length) {
+    wrap.appendChild(obsSection("Requests by route — click a row to drill in", renderRouteTable(m.byRoute, m.requests ?? 0)));
+  }
 
   // --- Event counters -------------------------------------------------------
   const counters = m.counters || {};
@@ -5009,18 +5304,30 @@ function renderObservability(data) {
   const cRow = document.createElement("div");
   cRow.className = "tl-stats";
   for (const [key, label] of counterDefs) {
-    cRow.appendChild(stat(label, (counters[key] ?? 0).toLocaleString()));
+    const n = counters[key] ?? 0;
+    // Counters that map to a journal kind are drillable.
+    const kindMap = { fschange: "fschange", reveal: "audit", write: "audit", restore: "audit", audit: "audit", error: "error" };
+    const onClick = n > 0 && kindMap[key]
+      ? () => obsDrillFetch(`${label} — recent`, { kind: kindMap[key], limit: "500" })
+      : undefined;
+    cRow.appendChild(obsStat(label, n.toLocaleString(), undefined, onClick));
   }
-  wrap.appendChild(section("Activity counters (since boot)", cRow));
+  wrap.appendChild(obsSection("Activity counters (since boot)", cRow));
 
   // --- History charts (reused from the activity timeline) -------------------
+  // Clicking a heatmap day drills into that day's events.
+  const onDay = (label) => {
+    const [y, mo, d] = label.split("-").map(Number);
+    const from = Date.UTC(y, mo - 1, d);
+    obsDrillFetch(`Events on ${label} (UTC)`, { from: String(from), to: String(from + 86_400_000 - 1), limit: "1000" });
+  };
   const heat = document.createElement("div");
-  heat.appendChild(renderHeatmap(agg.days));
+  heat.appendChild(renderHeatmap(agg.days, onDay));
   heat.appendChild(renderHeatmapLegend(agg.days));
-  wrap.appendChild(section(`Events per day · ${agg.total.toLocaleString()} in window`, heat));
-  wrap.appendChild(section("Events by hour of day (UTC)", renderHourChart(agg.byHour)));
+  wrap.appendChild(obsSection(`Events per day · ${agg.total.toLocaleString()} in window · click a day`, heat));
+  wrap.appendChild(obsSection("Events by hour of day (UTC)", renderHourChart(agg.byHour)));
 
-  // --- Event kinds ----------------------------------------------------------
+  // --- Event kinds (drillable) ----------------------------------------------
   const kinds = Object.entries(agg.byKind).sort((a, b) => b[1] - a[1]);
   if (kinds.length) {
     const maxK = kinds[0][1] || 1;
@@ -5028,7 +5335,9 @@ function renderObservability(data) {
     list.className = "obs-bars";
     for (const [kind, count] of kinds) {
       const row = document.createElement("div");
-      row.className = "obs-bar-row";
+      row.className = "obs-bar-row obs-bar-click";
+      row.title = `Drill into ${kind} events`;
+      row.addEventListener("click", () => obsDrillFetch(`Kind · ${kind}`, { kind, limit: "1000" }));
       const name = document.createElement("span");
       name.className = "obs-bar-label";
       name.textContent = kind;
@@ -5044,52 +5353,33 @@ function renderObservability(data) {
       row.append(name, track, val);
       list.appendChild(row);
     }
-    wrap.appendChild(section("Event kinds", list));
+    wrap.appendChild(obsSection("Event kinds — click to drill in", list));
   }
 
   // --- Most active paths ----------------------------------------------------
   if (agg.topPaths.length) {
-    const list = document.createElement("div");
-    list.className = "obs-paths";
-    for (const p of agg.topPaths) {
-      const row = document.createElement("div");
-      row.className = "obs-path-row";
-      const a = document.createElement("button");
-      a.className = "obs-path-link";
-      a.textContent = p.path;
-      a.title = `Open ${p.path}`;
-      a.addEventListener("click", () => openFile(p.path, false));
-      const c = document.createElement("span");
-      c.className = "obs-path-count";
-      c.textContent = p.count.toLocaleString();
-      row.append(a, c);
-      list.appendChild(row);
-    }
-    wrap.appendChild(section("Most active paths", list));
+    wrap.appendChild(obsSection("Most active paths", renderObsPathList(agg.topPaths)));
   }
 
   // --- Recent events --------------------------------------------------------
   if (data.recent && data.recent.length) {
     const list = document.createElement("div");
     list.className = "obs-events";
-    for (const ev of data.recent) {
-      const row = document.createElement("div");
-      row.className = "obs-event-row";
-      const badge = document.createElement("span");
-      badge.className = `obs-event-kind kind-${escapeHtml(ev.kind)}`;
-      badge.textContent = ev.op ? `${ev.kind}:${ev.op}` : ev.kind;
-      const detail = document.createElement("span");
-      detail.className = "obs-event-detail";
-      detail.textContent = ev.path || ev.msg || "";
-      detail.title = detail.textContent;
-      const when = document.createElement("span");
-      when.className = "obs-event-when";
-      when.textContent = obsAgo(ev.ts);
-      row.append(badge, detail, when);
-      list.appendChild(row);
-    }
-    wrap.appendChild(section("Recent events", list));
+    for (const ev of data.recent) list.appendChild(renderObsEventRow(ev, true));
+    wrap.appendChild(obsSection("Recent events", list));
   }
+
+  // --- Journal stats --------------------------------------------------------
+  const j = data.journal || {};
+  const jRow = document.createElement("div");
+  jRow.className = "tl-stats";
+  jRow.append(
+    obsStat("Journal size", obsBytes(j.bytes ?? 0)),
+    obsStat("All-time events", (j.events ?? 0).toLocaleString()),
+    obsStat("Oldest", j.oldestMs ? obsTime(j.oldestMs) : "—"),
+    obsStat("Newest", j.newestMs ? obsTime(j.newestMs) : "—"),
+  );
+  wrap.appendChild(obsSection("Journal", jRow));
 
   // --- Footer ---------------------------------------------------------------
   const note = document.createElement("div");

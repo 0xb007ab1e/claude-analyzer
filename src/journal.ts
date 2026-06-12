@@ -191,11 +191,13 @@ export class Journal {
    * Read recent events, newest first, across the backup + active file.
    *
    * @param opts.sinceMs  Only include events at/after this time (epoch ms).
+   * @param opts.untilMs  Only include events at/before this time (epoch ms).
    * @param opts.kinds    Restrict to these kinds.
+   * @param opts.path     Restrict to events whose `path` exactly equals this.
    * @param opts.limit    Maximum events to return (default 500, hard cap 5000).
    */
   async query(
-    opts: { sinceMs?: number; kinds?: string[]; limit?: number } = {},
+    opts: { sinceMs?: number; untilMs?: number; kinds?: string[]; path?: string; limit?: number } = {},
   ): Promise<JournalEvent[]> {
     const limit = Math.max(1, Math.min(5000, opts.limit ?? 500));
     const kinds = opts.kinds ? new Set(opts.kinds) : null;
@@ -218,13 +220,50 @@ export class Journal {
         }
         if (typeof ev.ts !== "number" || typeof ev.kind !== "string") continue;
         if (opts.sinceMs !== undefined && ev.ts < opts.sinceMs) continue;
+        if (opts.untilMs !== undefined && ev.ts > opts.untilMs) continue;
         if (kinds && !kinds.has(ev.kind)) continue;
+        if (opts.path !== undefined && ev.path !== opts.path) continue;
         events.push(ev);
       }
     }
     // Newest first, capped.
     events.reverse();
     return events.slice(0, limit);
+  }
+
+  /**
+   * Summarise the whole journal (both files): total bytes on disk, all-time
+   * event count, and the oldest/newest timestamps. Used for journal KPIs.
+   * Bounded work — file sizes are capped by rotation.
+   */
+  async stats(): Promise<{ bytes: number; events: number; oldestMs: number | null; newestMs: number | null }> {
+    let bytes = 0;
+    let events = 0;
+    let oldestMs: number | null = null;
+    let newestMs: number | null = null;
+    for (const f of [this.backup, this.file]) {
+      let text: string;
+      try {
+        text = await readFile(f, "utf8");
+      } catch {
+        continue;
+      }
+      bytes += Buffer.byteLength(text);
+      for (const raw of text.split("\n")) {
+        if (!raw) continue;
+        let ev: JournalEvent;
+        try {
+          ev = JSON.parse(raw) as JournalEvent;
+        } catch {
+          continue;
+        }
+        if (typeof ev.ts !== "number") continue;
+        events++;
+        if (oldestMs === null || ev.ts < oldestMs) oldestMs = ev.ts;
+        if (newestMs === null || ev.ts > newestMs) newestMs = ev.ts;
+      }
+    }
+    return { bytes, events, oldestMs, newestMs };
   }
 }
 
@@ -283,4 +322,41 @@ export function aggregateEvents(
     total: inWindow.length,
     range: { fromMs, toMs },
   };
+}
+
+/** Compact summary of an arbitrary (already-filtered) event set, for drill-downs. */
+export interface EventSummary {
+  count: number;
+  firstTs: number | null;
+  lastTs: number | null;
+  byKind: Record<string, number>;
+  byOp: Record<string, number>;
+  topPaths: { path: string; count: number }[];
+}
+
+/**
+ * Summarise a filtered list of events for a drill-down detail view: count,
+ * first/last timestamp, kind + op breakdowns, and the most-touched paths.
+ *
+ * @param events  Events to summarise (any order).
+ * @param topN    How many top paths to include (default 10).
+ */
+export function summarizeEvents(events: JournalEvent[], topN = 10): EventSummary {
+  const byKind: Record<string, number> = {};
+  const byOp: Record<string, number> = {};
+  const pathCounts = new Map<string, number>();
+  let firstTs: number | null = null;
+  let lastTs: number | null = null;
+  for (const e of events) {
+    byKind[e.kind] = (byKind[e.kind] ?? 0) + 1;
+    if (e.op) byOp[e.op] = (byOp[e.op] ?? 0) + 1;
+    if (e.path) pathCounts.set(e.path, (pathCounts.get(e.path) ?? 0) + 1);
+    if (firstTs === null || e.ts < firstTs) firstTs = e.ts;
+    if (lastTs === null || e.ts > lastTs) lastTs = e.ts;
+  }
+  const topPaths = [...pathCounts.entries()]
+    .map(([path, count]) => ({ path, count }))
+    .sort((a, b) => b.count - a.count || a.path.localeCompare(b.path))
+    .slice(0, topN);
+  return { count: events.length, firstTs, lastTs, byKind, byOp, topPaths };
 }

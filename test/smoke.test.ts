@@ -144,7 +144,7 @@ test("GET /api/metrics exposes RED metrics that reflect prior requests", async (
   assert.equal(typeof m.latency.p95Ms, "number");
 });
 
-test("GET /api/observability returns an aggregate + metrics snapshot", async () => {
+test("GET /api/observability returns an aggregate + metrics snapshot + journal stats", async () => {
   const r = await get("/api/observability?days=7");
   assert.equal(r.status, 200);
   const o = JSON.parse(r.body);
@@ -152,5 +152,20 @@ test("GET /api/observability returns an aggregate + metrics snapshot", async () 
   assert.equal(o.aggregate.days.length, 7);
   assert.ok(Array.isArray(o.recent));
   assert.ok(o.metrics && typeof o.metrics.requests === "number");
+  // Per-route latency present in the snapshot.
+  const route = o.metrics.byRoute["GET /api/config"];
+  assert.ok(route && typeof route.avgMs === "number" && typeof route.maxMs === "number");
   assert.equal(typeof o.journalDir, "string");
+  assert.ok(o.journal && typeof o.journal.events === "number" && typeof o.journal.bytes === "number");
+});
+
+test("GET /api/journal returns a filtered slice + summary", async () => {
+  const r = await get("/api/journal?kind=audit&limit=50");
+  assert.equal(r.status, 200);
+  const d = JSON.parse(r.body);
+  assert.ok(Array.isArray(d.events));
+  assert.ok(d.summary && typeof d.summary.count === "number");
+  assert.deepEqual(d.filter.kinds, ["audit"]);
+  // Every returned event must match the requested kind.
+  assert.ok(d.events.every((e: { kind: string }) => e.kind === "audit"));
 });

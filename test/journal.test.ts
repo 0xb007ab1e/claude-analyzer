@@ -15,6 +15,7 @@ import {
   defaultStateDir,
   resolveJournalDir,
   aggregateEvents,
+  summarizeEvents,
   type JournalEvent,
 } from "../src/journal.ts";
 
@@ -97,6 +98,50 @@ test("query tolerates a torn/partial trailing line", async () => {
   const all = await j.query();
   assert.equal(all.length, 1);
   assert.equal(all[0]?.ts, 1);
+});
+
+test("query filters by path and by until/since window", async () => {
+  const j = new Journal(tmp());
+  await j.record({ ts: 100, kind: "fschange", path: "a.txt", op: "change" });
+  await j.record({ ts: 200, kind: "fschange", path: "b.txt", op: "rename" });
+  await j.record({ ts: 300, kind: "fschange", path: "a.txt", op: "change" });
+
+  const onlyA = await j.query({ path: "a.txt" });
+  assert.deepEqual(onlyA.map((e) => e.ts), [300, 100]);
+
+  const windowed = await j.query({ sinceMs: 150, untilMs: 250 });
+  assert.deepEqual(windowed.map((e) => e.ts), [200]);
+});
+
+test("stats reports bytes, count, and oldest/newest span", async () => {
+  const j = new Journal(tmp());
+  const empty = await j.stats();
+  assert.equal(empty.events, 0);
+  assert.equal(empty.oldestMs, null);
+
+  await j.record({ ts: 500, kind: "audit", msg: "x" });
+  await j.record({ ts: 100, kind: "fschange", path: "a", op: "change" });
+  await j.record({ ts: 900, kind: "fschange", path: "b", op: "change" });
+  const s = await j.stats();
+  assert.equal(s.events, 3);
+  assert.equal(s.oldestMs, 100);
+  assert.equal(s.newestMs, 900);
+  assert.ok(s.bytes > 0);
+});
+
+test("summarizeEvents reports count, span, kind/op breakdowns, top paths", () => {
+  const summary = summarizeEvents([
+    { ts: 10, kind: "fschange", path: "x", op: "change" },
+    { ts: 30, kind: "fschange", path: "x", op: "rename" },
+    { ts: 20, kind: "audit", msg: "reveal x" },
+  ]);
+  assert.equal(summary.count, 3);
+  assert.equal(summary.firstTs, 10);
+  assert.equal(summary.lastTs, 30);
+  assert.deepEqual(summary.byKind, { fschange: 2, audit: 1 });
+  assert.deepEqual(summary.byOp, { change: 1, rename: 1 });
+  assert.equal(summary.topPaths[0]?.path, "x");
+  assert.equal(summary.topPaths[0]?.count, 2);
 });
 
 test("aggregateEvents buckets by day/hour/kind and ranks top paths", () => {

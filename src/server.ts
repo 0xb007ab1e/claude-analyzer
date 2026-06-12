@@ -37,7 +37,7 @@ import { listProjects } from "./projects.ts";
 import { buildGraph, trimGraph, type GraphStats } from "./graph.ts";
 import { runAudit } from "./auditHandler.ts";
 import { Metrics, routeLabel } from "./metrics.ts";
-import { Journal, resolveJournalDir, aggregateEvents } from "./journal.ts";
+import { Journal, resolveJournalDir, aggregateEvents, summarizeEvents } from "./journal.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
@@ -283,7 +283,28 @@ async function handle(
         recent: events.slice(0, 50),
         metrics: metrics!.snapshot(now, process.memoryUsage().rss),
         journalDir: journal!.dir,
+        journal: await journal!.stats(),
       });
+      return;
+    }
+
+    // Drill-down: filtered slice of the event journal + a compact summary.
+    // Query: kind (csv), path (exact), from/to (epoch ms), limit.
+    if (path === "/api/journal" && req.method === "GET") {
+      const kindParam = url.searchParams.get("kind");
+      const kinds = kindParam ? kindParam.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+      const pathParam = url.searchParams.get("path") ?? undefined;
+      const fromParam = url.searchParams.get("from");
+      const toParam = url.searchParams.get("to");
+      const limit = Math.max(1, Math.min(2000, parseInt(url.searchParams.get("limit") ?? "200", 10) || 200));
+      const events = await journal!.query({
+        kinds,
+        path: pathParam,
+        sinceMs: fromParam ? parseInt(fromParam, 10) : undefined,
+        untilMs: toParam ? parseInt(toParam, 10) : undefined,
+        limit,
+      });
+      sendJson(res, 200, { events, summary: summarizeEvents(events), filter: { kinds, path: pathParam } });
       return;
     }
 

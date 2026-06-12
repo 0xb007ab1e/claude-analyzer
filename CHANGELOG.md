@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-06-12
+
+### Added
+
+- **Full-text search (🔍 Search files).** Search file *contents* across the
+  whole `.claude` tree — case-insensitive, text files only, streamed
+  line-by-line so multi-MiB transcripts are handled. Results are grouped by file
+  with line numbers and **redacted** snippets (a hit on a secret shows the mask,
+  never the value); query terms are highlighted and clicking a hit opens the
+  file. Plain-substring matching (no regex / no ReDoS), and bounded on every
+  axis — files scanned, hits per file, total matches, lines per file, plus a 5s
+  wall-clock budget — surfaced as a `truncated`/`capped` flag. Served by
+  `GET /api/search?q=`; queries shorter than 2 characters are rejected.
+
 ## [0.1.6] - 2026-06-12
 
 ### Added
@@ -135,6 +149,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.7]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.7
 [0.1.6]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.6
 [0.1.5]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.5
 [0.1.4]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.4

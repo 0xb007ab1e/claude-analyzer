@@ -13,5 +13,5 @@
     "lan": "node --experimental-strip-types --watch src/server.ts --host 0.0.0.0",
     "test": "node --experimental-strip-types --test 'test/**/*.test.ts'"
   },
-  "license": "MIT"
+  "license": "0BSD"
 }

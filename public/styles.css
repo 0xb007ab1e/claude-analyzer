@@ -2472,3 +2472,151 @@ tr.sev-info   td { color: var(--text); }
   padding: 2px 0 8px;
 }
 .chunk-more { margin: 14px auto; display: block; }
+
+/* ---------------------------------------------------------------------------
+ * Observability dashboard (#obs-overlay). Reuses the timeline's .tl-* layout
+ * (overlay, panel, sections, stat cards, heatmap, hour chart); these classes
+ * cover the pieces unique to observability: counter hint text, kind bars,
+ * top-path list, and the recent-events feed.
+ * ------------------------------------------------------------------------- */
+
+.obs-stat-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 3px;
+  font-family: var(--mono);
+}
+
+/* Horizontal bars for the event-kind breakdown. */
+.obs-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.obs-bar-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 56px;
+  align-items: center;
+  gap: 10px;
+}
+.obs-bar-label {
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.obs-bar-track {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  height: 16px;
+  overflow: hidden;
+}
+.obs-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 6px 0 0 6px;
+  min-width: 3px;
+}
+.obs-bar-value {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  text-align: right;
+}
+
+/* Per-kind accent colours (shared by bars + recent-event badges). */
+.obs-bar-fill.kind-fschange,
+.obs-event-kind.kind-fschange { background: var(--accent); }
+.obs-bar-fill.kind-audit,
+.obs-event-kind.kind-audit { background: var(--warn); }
+.obs-bar-fill.kind-error,
+.obs-event-kind.kind-error { background: var(--danger); }
+.obs-bar-fill.kind-reveal,
+.obs-event-kind.kind-reveal { background: var(--warn); }
+.obs-bar-fill.kind-write,
+.obs-event-kind.kind-write { background: var(--ok); }
+
+/* Most-active-paths list. */
+.obs-paths {
+  display: flex;
+  flex-direction: column;
+}
+.obs-path-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.obs-path-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+}
+.obs-path-link:hover { text-decoration: underline; }
+.obs-path-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+/* Recent-events feed. */
+.obs-events {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.obs-event-row {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.obs-event-kind {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.obs-event-detail {
+  font-family: var(--mono);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.obs-event-when {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Mobile: collapse the multi-column rows so nothing clips. */
+@media (max-width: 640px) {
+  .obs-bar-row { grid-template-columns: 90px 1fr 44px; }
+  .obs-event-row { grid-template-columns: 92px 1fr auto; }
+}

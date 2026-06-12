@@ -36,6 +36,8 @@ import { gatherExtensions } from "./extensions.ts";
 import { listProjects } from "./projects.ts";
 import { buildGraph, trimGraph, type GraphStats } from "./graph.ts";
 import { runAudit } from "./auditHandler.ts";
+import { Metrics, routeLabel } from "./metrics.ts";
+import { Journal, resolveJournalDir, aggregateEvents } from "./journal.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
@@ -48,6 +50,15 @@ const MAX_BODY_BYTES = 16 * 1024 * 1024; // 16 MiB write cap
  * reloading the whole UI every time the long-lived connection drops.
  */
 const BOOT_ID = `${Date.now().toString(36)}-${process.pid.toString(36)}`;
+
+/**
+ * Observability singletons, initialised in {@link main}. Module-scoped because
+ * the {@link log} chokepoint (called from many places without a handle to them)
+ * forwards audit/error events here. Both are non-null for the life of a request
+ * since {@link main} sets them before the server starts listening.
+ */
+let metrics: Metrics | null = null;
+let journal: Journal | null = null;
 
 /** Static file content types. */
 const STATIC_TYPES: Record<string, string> = {
@@ -122,6 +133,11 @@ function main(): void {
     throw e;
   }
 
+  // Observability: in-process RED metrics + a persistent event journal stored
+  // OUTSIDE the watched root (so the watcher never observes its own writes).
+  metrics = new Metrics(BOOT_ID, Date.now());
+  journal = new Journal(resolveJournalDir(config.root));
+
   // Connected SSE clients. The server watches the root and pushes `fschange`
   // events (the live directory-watch feature) to all of them; under --reload it
   // also pushes `reload` events when the UI's own assets change.
@@ -129,6 +145,23 @@ function main(): void {
   startWatchers(liveClients, config);
 
   const server = createServer((req, res) => {
+    // Per-request RED metrics. The SSE stream is long-lived, so recording its
+    // latency on `finish` would skew the histogram — count it once at connect
+    // with zero duration instead.
+    const start = Date.now();
+    let path = "/";
+    try {
+      path = new URL(req.url ?? "/", "http://x").pathname;
+    } catch {
+      /* malformed URL — keep "/" */
+    }
+    const lbl = routeLabel(req.method ?? "GET", path);
+    if (lbl === "GET /api/events") {
+      metrics?.recordRequest(lbl, 200, 0);
+    } else {
+      res.on("finish", () => metrics?.recordRequest(lbl, res.statusCode, Date.now() - start));
+    }
+
     handle(req, res, config, liveClients).catch((err) => {
       log("error", `unhandled: ${(err as Error).message}`);
       sendJson(res, 500, { error: "internal error" });
@@ -228,6 +261,29 @@ async function handle(
 
     if (path === "/api/projects" && req.method === "GET") {
       sendJson(res, 200, await listProjects(config.root));
+      return;
+    }
+
+    // App self-metrics (RED) — machine-readable JSON.
+    if (path === "/api/metrics" && req.method === "GET") {
+      sendJson(res, 200, metrics!.snapshot(Date.now(), process.memoryUsage().rss));
+      return;
+    }
+
+    // Observability dashboard payload: aggregated event history (from the
+    // persistent journal) + a recent-events tail + the current metrics snapshot.
+    if (path === "/api/observability" && req.method === "GET") {
+      const days = Math.max(1, Math.min(365, parseInt(url.searchParams.get("days") ?? "30", 10) || 30));
+      const now = Date.now();
+      // Pull a window slightly wider than requested so day-boundary events at
+      // the edge aren't dropped, then aggregate to the exact window.
+      const events = await journal!.query({ sinceMs: now - (days + 1) * 86_400_000, limit: 5000 });
+      sendJson(res, 200, {
+        aggregate: aggregateEvents(events, now, days),
+        recent: events.slice(0, 50),
+        metrics: metrics!.snapshot(now, process.memoryUsage().rss),
+        journalDir: journal!.dir,
+      });
       return;
     }
 
@@ -530,6 +586,13 @@ function startWatchers(clients: Set<ServerResponse>, config: Config): void {
     const changes = [...pending].map(([path, kind]) => ({ path, kind }));
     pending.clear();
     broadcast(clients, "fschange", JSON.stringify({ changes }));
+    // Persist each change to the observability journal (metadata only — path +
+    // op, never contents) and bump the live counter.
+    const now = Date.now();
+    for (const { path, kind } of changes) {
+      metrics?.incr("fschange");
+      void journal?.record({ ts: now, kind: "fschange", path, op: kind });
+    }
   };
   try {
     watch(config.root, { recursive: true }, (eventType, filename) => {
@@ -576,9 +639,28 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(data);
 }
 
-/** Minimal structured-ish logger to stdout. */
+/**
+ * Minimal structured-ish logger to stdout, doubling as the observability
+ * chokepoint: `audit` and `error` lines are mirrored into the persistent
+ * journal and counted in metrics. Audit messages use consistent verb prefixes
+ * ("reveal …", "write: …", "restore …"), so the leading verb is also counted
+ * as its own metric. Best-effort — a journal/metrics failure never throws here.
+ */
 function log(level: "info" | "audit" | "error", msg: string): void {
   process.stdout.write(`[${new Date().toISOString()}] ${level}: ${msg}\n`);
+  try {
+    if (level === "audit") {
+      metrics?.incr("audit");
+      const verb = msg.split(/[:\s]/, 1)[0];
+      if (verb) metrics?.incr(verb);
+      void journal?.record({ ts: Date.now(), kind: "audit", msg });
+    } else if (level === "error") {
+      metrics?.incr("error");
+      void journal?.record({ ts: Date.now(), kind: "error", msg });
+    }
+  } catch {
+    /* observability must not break the request path */
+  }
 }
 
 main();

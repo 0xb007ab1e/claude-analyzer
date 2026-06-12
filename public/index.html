@@ -26,6 +26,7 @@
           <button class="views-item" role="menuitem" data-target="#timeline-toggle">📅 Activity timeline</button>
           <button class="views-item" role="menuitem" data-target="#graph-toggle">🕸 Relationship graph</button>
           <button class="views-item" role="menuitem" data-target="#audit-toggle">🛡 Security audit</button>
+          <button class="views-item" role="menuitem" data-target="#obs-toggle">📈 Observability</button>
           <div class="views-sep"></div>
           <button class="views-item names-toggle" id="names-toggle" role="menuitemcheckbox" aria-checked="true" title="Toggle between friendly project-derived names and raw UUIDs / paths across the graph, Projects, Usage, and session viewer">🏷 <span class="names-toggle-label">Names: Friendly</span></button>
         </div>
@@ -49,6 +50,7 @@
         <button id="projects-toggle" class="iconbtn always-show" aria-label="Toggle project map" aria-expanded="false">🗂 Projects</button>
         <button id="graph-toggle" class="btn" title="Relationship graph — link artifacts by shared session UUIDs">🕸 Graph</button>
         <button id="audit-toggle" class="btn audit-btn" aria-label="Open security audit panel" aria-expanded="false">🛡 Audit</button>
+        <button id="obs-toggle" class="btn" title="Observability — server metrics + .claude usage history" aria-expanded="false">📈 Observability</button>
       </div>
 
       <button id="nav-toggle" class="iconbtn" aria-label="Toggle file tree" aria-expanded="false">☰</button>
@@ -181,6 +183,29 @@
           </div>
         </div>
         <div id="timeline-body" class="timeline-body">
+          <div class="timeline-loading">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Observability overlay — server metrics (RED) + persistent .claude usage history -->
+    <div id="obs-overlay" class="timeline-overlay hidden" role="dialog" aria-modal="true" aria-label="Observability dashboard">
+      <div class="timeline-panel">
+        <div class="timeline-head">
+          <span>📈 Observability</span>
+          <div class="timeline-controls">
+            <label class="timeline-days-label" for="obs-days">Days:</label>
+            <select id="obs-days" class="timeline-days-select">
+              <option value="7">7</option>
+              <option value="30" selected>30</option>
+              <option value="90">90</option>
+              <option value="365">365</option>
+            </select>
+            <button id="obs-refresh" class="btn" title="Refresh">↺</button>
+            <button id="obs-close" class="btn" aria-label="Close observability">✕</button>
+          </div>
+        </div>
+        <div id="obs-body" class="timeline-body">
           <div class="timeline-loading">Loading…</div>
         </div>
       </div>

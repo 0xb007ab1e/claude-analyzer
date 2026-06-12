@@ -27,6 +27,7 @@ import {
 } from "./files.ts";
 import { PathError, toRelative } from "./paths.ts";
 import { searchTree } from "./xref.ts";
+import { searchTreeText, SearchError } from "./search.ts";
 import { sessionInfo, extractSessionCwd } from "./sessions.ts";
 import { readSettings } from "./settings.ts";
 import { collectUsage } from "./usage.ts";
@@ -248,6 +249,22 @@ async function handle(
 
     if (path === "/api/usage" && req.method === "GET") {
       sendJson(res, 200, await collectUsage({ root: config.root }));
+      return;
+    }
+
+    // Full-text search across the tree. Snippets are redacted server-side.
+    if (path === "/api/search" && req.method === "GET") {
+      const q = url.searchParams.get("q") ?? "";
+      try {
+        log("audit", `search: ${q.slice(0, 80)}`);
+        sendJson(res, 200, await searchTreeText(config.root, q));
+      } catch (e) {
+        if (e instanceof SearchError) {
+          sendJson(res, 400, { error: e.message });
+          return;
+        }
+        throw e;
+      }
       return;
     }
 

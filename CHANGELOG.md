@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-06-12
+
+### Added
+
+- **Observability drill-downs — "KPI everything".** The 📈 Observability view
+  expands from summary tiles into a full, drillable KPI surface:
+  - **Server health:** throughput (req/min), success rate, error rate.
+  - **Request latency:** avg / p50 / p95 / p99 / max plus a latency histogram.
+  - **Status codes:** a 2xx/3xx/4xx/5xx distribution bar.
+  - **Requests by route:** a per-route KPI table (reqs, share, 2xx/4xx/5xx, and
+    new per-route avg & max latency).
+  - **Journal stats:** size on disk, all-time event count, oldest→newest span.
+  - **Drill-downs:** click a route row, an event-kind bar, a heatmap day, a
+    counter card, or a path's history button to open a pinned detail panel with
+    a filtered event slice + summary (count, span, kind/op breakdown, top
+    paths), served by the new read-only `GET /api/journal?kind=&path=&from=&to=`
+    endpoint.
+
 ## [0.1.5] - 2026-06-12
 
 ### Added
@@ -117,6 +135,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.6]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.6
 [0.1.5]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.5
 [0.1.4]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.4
 [0.1.3]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.3

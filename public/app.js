@@ -205,14 +205,15 @@ function renderNode(entry) {
     children.className = "tree-children hidden";
     children.dataset.dir = entry.path;
     node.appendChild(children);
-    let loaded = false;
     row.addEventListener("click", async () => {
-      const open = children.classList.toggle("hidden");
-      twisty.textContent = open ? "▸" : "▾";
-      if (!open && !loaded) {
+      const nowHidden = children.classList.toggle("hidden");
+      twisty.textContent = nowHidden ? "▸" : "▾";
+      // Load on first expand, or reload if it changed while collapsed (dirty).
+      const stale = children.dataset.loaded !== "1" || children.dataset.dirty === "1";
+      if (!nowHidden && stale) {
         children.innerHTML = '<div class="tree-loading">…</div>';
-        await expandInto(children, entry.path);
-        loaded = true;
+        await expandInto(children, entry.path); // sets dataset.loaded = "1"
+        delete children.dataset.dirty;
       }
     });
   } else {
@@ -812,7 +813,13 @@ function flash(el) {
  */
 async function refreshDir(dir) {
   const c = document.querySelector(`.tree-children[data-dir="${cssEscape(dir)}"]`);
-  if (!c || c.dataset.loaded !== "1" || c.classList.contains("hidden")) return;
+  if (!c || c.dataset.loaded !== "1") return;
+  // Loaded but collapsed: don't reconcile a hidden subtree — mark it dirty so it
+  // reloads on the next expand (otherwise changes made while collapsed are lost).
+  if (c.classList.contains("hidden")) {
+    c.dataset.dirty = "1";
+    return;
+  }
   let data;
   try {
     data = await api(`/api/list?path=${encodeURIComponent(dir)}`);

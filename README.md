@@ -76,8 +76,14 @@ source repository**, showing where that artifact is read or written in the code.
 ### Live directory watch
 
 The server watches the root and streams changes to the browser, **flashing** changed
-files in the tree and refreshing the open file in place. A **● live / ❚❚ no flash**
+files in the tree, adding/removing rows for created/deleted files in expanded folders,
+and refreshing the open file in place. A directory changed while collapsed reloads when
+you re-expand it, so the tree never shows stale contents. A **● live / ❚❚ no flash**
 toggle pauses the flashing while the activity log keeps recording.
+
+The same watch stream maintains an in-memory **file-tree cache** (path → mtime) that backs
+the relationship graph and activity timeline, so those views render without re-walking the
+whole tree on every request (a TTL rebuild and a watch-error fallback guard against drift).
 
 ### Names: friendly ⇄ UUID
 

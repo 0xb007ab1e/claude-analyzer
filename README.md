@@ -65,13 +65,26 @@ The server watches the root and streams changes to the browser, **flashing** cha
 files in the tree and refreshing the open file in place. A **● live / ❚❚ no flash**
 toggle pauses the flashing while the activity log keeps recording.
 
+### Names: friendly ⇄ UUID
+
+A global **name-mode toggle** (in the **▾ Views** menu, and as a checkbox in the
+graph controls) switches every name-bearing view between **friendly** project
+names (derived from the path, minus directory identifiers) and raw **UUIDs /
+full paths**. It applies to the relationship graph, the Projects panel, the
+Usage dashboard, and the session-viewer header, and is remembered between
+sessions. Project working directories are read from the session transcripts, so
+the displayed paths and the Projects "exists" badge are accurate (not a guess
+from the lossy `projects/` directory-name encoding).
+
 ### Relationship graph
 
 - **Force** (default) layout, or a **Grid** of per-cluster cells (radial hub + rings).
 - Each connected group (a session hub + its files) gets a **unique colour** for its
-  nodes and edges; hubs are labelled by project/session, files by kind.
-- **Search** to centre + highlight a group; **filter** by kind, top-N, or hide trivial
-  2-node groups; **zoom** with +/−, scroll, or pinch; tap a file node to open it.
+  nodes and edges; hubs are labelled by project/session (or UUID — see the name
+  toggle above), files by kind.
+- **Search** to centre + highlight a group (matches project name *or* UUID); **filter**
+  by kind, top-N, or hide trivial 2-node groups; **zoom** with +/−, scroll, or pinch;
+  tap a file node to open it.
 
 ### Safety
 

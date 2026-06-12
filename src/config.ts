@@ -12,13 +12,38 @@
 
 import { realpathSync, statSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join, resolve } from "node:path";
-
-/** Default path for the Claude Code source repository (used by --source). */
-const DEFAULT_SOURCE_DIR = "/home/b007ab1e/_src/_dev/artificial-intelligence/claude/claude-code";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Loopback host names always accepted in the Host header. */
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
+
+/**
+ * Auto-detect the Claude Code source repository for the xref feature, without
+ * baking in any machine-specific path. Probes a few conventional locations
+ * relative to this app and the user's home; the first existing directory wins.
+ * Returns `null` if none are found — the feature then stays off until the user
+ * supplies `--source <dir>` or `CLAUDE_SRC`.
+ *
+ * @param env  Environment (for `HOME`).
+ */
+function detectSourceDir(env: NodeJS.ProcessEnv): string | null {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const home = env.HOME ?? homedir();
+  const candidates = [
+    join(repoRoot, "..", "claude", "claude-code"), // sibling "claude/claude-code"
+    join(repoRoot, "..", "claude-code"), // sibling "claude-code"
+    join(home, "claude-code"),
+  ];
+  for (const c of candidates) {
+    try {
+      if (statSync(c).isDirectory()) return c;
+    } catch {
+      // not present — try the next candidate
+    }
+  }
+  return null;
+}
 
 /** Fully-resolved, validated runtime configuration. */
 export interface Config {
@@ -42,8 +67,8 @@ export interface Config {
    * source cross-reference feature (`/api/xref`). `null` when not configured or
    * the directory doesn't exist — the feature degrades gracefully.
    *
-   * Set via `--source <dir>` or `CLAUDE_SRC` env. Defaults to
-   * `/home/b007ab1e/_src/_dev/artificial-intelligence/claude/claude-code`.
+   * Resolved from `--source <dir>`, then `CLAUDE_SRC`, then auto-detected from a
+   * few conventional locations (see {@link detectSourceDir}); `null` if none.
    */
   sourceDir: string | null;
 }
@@ -70,8 +95,8 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv = process.env)
   const reload = flags.noReload ? false : true;
   const allowedHosts = buildAllowedHosts(host, flags.allowHost, env.ALLOW_HOST);
 
-  const rawSource = flags.source ?? env.CLAUDE_SRC ?? DEFAULT_SOURCE_DIR;
-  const sourceDir = validateSourceDir(rawSource);
+  const rawSource = flags.source ?? env.CLAUDE_SRC ?? detectSourceDir(env);
+  const sourceDir = rawSource ? validateSourceDir(rawSource) : null;
 
   return { root, host, port, allowWrite, allowedHosts, reload, sourceDir };
 }

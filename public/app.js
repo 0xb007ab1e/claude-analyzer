@@ -5424,4 +5424,167 @@ function renderObservability(data) {
   daysSelect.addEventListener("change", () => loadObservability(days()));
 })();
 
+// ---------------------------------------------------------------------------
+// Full-text search across the .claude tree (redacted snippets from /api/search)
+// ---------------------------------------------------------------------------
+
+/**
+ * Escape a string for safe use inside a RegExp.
+ * @param {string} s
+ */
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Build a DOM fragment of a snippet with case-insensitive matches of `query`
+ * wrapped in <mark>. Text is added via textContent (never innerHTML), so it is
+ * inherently XSS-safe even though snippets are already redacted server-side.
+ *
+ * @param {string} snippet
+ * @param {string} query
+ * @returns {DocumentFragment}
+ */
+function highlightSnippet(snippet, query) {
+  const frag = document.createDocumentFragment();
+  if (!query) {
+    frag.appendChild(document.createTextNode(snippet));
+    return frag;
+  }
+  const re = new RegExp(escapeRegExp(query), "ig");
+  let last = 0;
+  let m;
+  while ((m = re.exec(snippet)) !== null) {
+    if (m.index > last) frag.appendChild(document.createTextNode(snippet.slice(last, m.index)));
+    const mark = document.createElement("mark");
+    mark.textContent = m[0];
+    frag.appendChild(mark);
+    last = m.index + m[0].length;
+    if (m.index === re.lastIndex) re.lastIndex++; // guard against zero-length match
+  }
+  if (last < snippet.length) frag.appendChild(document.createTextNode(snippet.slice(last)));
+  return frag;
+}
+
+/**
+ * Run a search and render the results.
+ * @param {string} query
+ */
+async function runSearch(query) {
+  const body = $("#search-body");
+  const status = $("#search-status");
+  const q = query.trim();
+  if (q.length < 2) {
+    status.textContent = "";
+    body.innerHTML = '<div class="search-hint">Type at least 2 characters. Snippets are redacted; open a file to reveal.</div>';
+    return;
+  }
+  status.textContent = "Searching…";
+  let data;
+  try {
+    data = await api(`/api/search?q=${encodeURIComponent(q)}`);
+  } catch (e) {
+    status.textContent = "";
+    body.innerHTML = `<div class="search-hint">Error: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  // Ignore a stale response if the query changed while the request was in flight.
+  if ($("#search-input").value.trim() !== q) return;
+
+  status.textContent =
+    `${data.matchedFiles.toLocaleString()} file${data.matchedFiles !== 1 ? "s" : ""} · ` +
+    `${data.totalMatches.toLocaleString()} match${data.totalMatches !== 1 ? "es" : ""} · ` +
+    `${data.scanned.toLocaleString()} scanned${data.truncated ? " · capped" : ""}`;
+
+  body.innerHTML = "";
+  if (!data.files.length) {
+    body.innerHTML = '<div class="search-hint">No matches.</div>';
+    return;
+  }
+  for (const f of data.files) body.appendChild(renderSearchFile(f, q));
+}
+
+/**
+ * Render one file's results group.
+ * @param {{path:string,hits:Array<{line:number,snippet:string}>,total:number,redacted:boolean}} f
+ * @param {string} query
+ * @returns {HTMLElement}
+ */
+function renderSearchFile(f, query) {
+  const group = document.createElement("div");
+  group.className = "search-file";
+
+  const head = document.createElement("button");
+  head.className = "search-file-head";
+  head.title = `Open ${f.path}`;
+  const name = document.createElement("span");
+  name.className = "search-file-path";
+  name.textContent = f.path;
+  const count = document.createElement("span");
+  count.className = "search-file-count";
+  const extra = f.total > f.hits.length ? `${f.hits.length} of ${f.total}` : `${f.total}`;
+  count.textContent = `${extra} hit${f.total !== 1 ? "s" : ""}`;
+  head.append(name, count);
+  head.addEventListener("click", () => openFile(f.path, false));
+  group.appendChild(head);
+
+  for (const h of f.hits) {
+    const row = document.createElement("div");
+    row.className = "search-hit";
+    row.title = `Open ${f.path} (line ${h.line})`;
+    const ln = document.createElement("span");
+    ln.className = "search-hit-line";
+    ln.textContent = `L${h.line}`;
+    const snip = document.createElement("span");
+    snip.className = "search-hit-snippet";
+    snip.appendChild(highlightSnippet(h.snippet, query));
+    row.append(ln, snip);
+    row.addEventListener("click", () => openFile(f.path, false));
+    group.appendChild(row);
+  }
+  return group;
+}
+
+// Wire up the search overlay (mirrors setupTimeline).
+(function setupSearch() {
+  const overlay = /** @type {HTMLElement} */ (document.getElementById("search-overlay"));
+  const toggleBtn = /** @type {HTMLElement} */ (document.getElementById("search-toggle"));
+  const closeBtn = /** @type {HTMLElement} */ (document.getElementById("search-close"));
+  const input = /** @type {HTMLInputElement} */ (document.getElementById("search-input"));
+  if (!overlay || !toggleBtn || !closeBtn || !input) return;
+
+  let debounce = null;
+  function open() {
+    overlay.classList.remove("hidden");
+    toggleBtn.setAttribute("aria-expanded", "true");
+    input.focus();
+    input.select();
+  }
+  function close() {
+    overlay.classList.add("hidden");
+    toggleBtn.setAttribute("aria-expanded", "false");
+  }
+  toggleBtn.addEventListener("click", () => {
+    if (overlay.classList.contains("hidden")) open();
+    else close();
+  });
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  input.addEventListener("input", () => {
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => runSearch(input.value), 300);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      if (debounce) clearTimeout(debounce);
+      runSearch(input.value);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !overlay.classList.contains("hidden")) close();
+  });
+})();
+
 init();

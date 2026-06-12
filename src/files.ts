@@ -73,7 +73,8 @@ export interface FileLines {
 /** Max bytes we will read into memory and ship to the browser as text. */
 const MAX_TEXT_BYTES = 8 * 1024 * 1024; // 8 MiB
 
-const TEXT_EXTENSIONS = new Set([
+/** File extensions treated as searchable/renderable text (shared with search). */
+export const TEXT_EXTENSIONS = new Set([
   "json", "jsonl", "ndjson", "md", "markdown", "txt", "text", "log", "out", "err",
   "sh", "bash", "zsh", "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go",
   "rs", "yml", "yaml", "toml", "ini", "cfg", "conf", "env", "lock", "csv", "tsv",

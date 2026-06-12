@@ -16,6 +16,7 @@
       <div class="menu">
         <button id="views-btn" class="btn" aria-haspopup="true" aria-expanded="false">▾ Views</button>
         <div id="views-menu" class="views-menu hidden" role="menu" aria-label="Views">
+          <button class="views-item" role="menuitem" data-target="#search-toggle">🔍 Search files</button>
           <button class="views-item" role="menuitem" data-target="#log-toggle">🕒 Activity log</button>
           <button class="views-item" role="menuitem" data-target="#projects-toggle">🗂 Projects</button>
           <button class="views-item" role="menuitem" data-target="#settings-toggle">⚙ Settings</button>
@@ -45,6 +46,7 @@
         <button id="history-toggle" class="iconbtn" aria-label="Toggle file history" aria-expanded="false">🕰</button>
         <button id="ext-toggle" class="iconbtn" aria-label="Extensions explorer" aria-expanded="false" title="Hooks / Agents / Skills / Commands / MCP">🧩</button>
         <button id="settings-toggle" class="badge" title="View merged settings, layer breakdown, and .bak diff">⚙ Settings</button>
+        <button id="search-toggle" class="btn" title="Full-text search across the .claude tree">🔍 Search</button>
         <button id="usage-toggle" class="btn" title="Usage &amp; cost dashboard">📊 Usage</button>
         <button id="timeline-toggle" class="btn" aria-label="Open activity timeline" title="Activity timeline — calendar heatmap of file changes">📅 Activity</button>
         <button id="projects-toggle" class="iconbtn always-show" aria-label="Toggle project map" aria-expanded="false">🗂 Projects</button>
@@ -184,6 +186,23 @@
         </div>
         <div id="timeline-body" class="timeline-body">
           <div class="timeline-loading">Loading…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full-text search overlay -->
+    <div id="search-overlay" class="timeline-overlay hidden" role="dialog" aria-modal="true" aria-label="Search files">
+      <div class="timeline-panel">
+        <div class="timeline-head">
+          <span>🔍 Search files</span>
+          <div class="timeline-controls">
+            <input id="search-input" class="search-input" type="search" placeholder="Search file contents…" aria-label="Search query" autocomplete="off" />
+            <button id="search-close" class="btn" aria-label="Close search">✕</button>
+          </div>
+        </div>
+        <div id="search-status" class="search-status"></div>
+        <div id="search-body" class="timeline-body">
+          <div class="search-hint">Type at least 2 characters. Snippets are redacted; open a file to reveal.</div>
         </div>
       </div>
     </div>

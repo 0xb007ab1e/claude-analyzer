@@ -2730,3 +2730,85 @@ tr.sev-info   td { color: var(--text); }
 @media (max-width: 640px) {
   .obs-path-row { flex-wrap: wrap; }
 }
+
+/* --- Full-text search overlay -------------------------------------------- */
+.search-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 10px;
+  min-width: 220px;
+  flex: 1 1 auto;
+}
+.search-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.search-status {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  padding: 6px 14px 0;
+}
+.search-hint { color: var(--text-dim); font-size: 13px; padding: 16px; }
+
+.search-file { margin: 10px 0; }
+.search-file-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.search-file-head:hover { border-color: var(--accent); }
+.search-file-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-file-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  flex: 0 0 auto;
+}
+.search-hit {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.search-hit:hover { background: var(--bg); }
+.search-hit-line {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+}
+.search-hit-snippet {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.search-hit-snippet mark {
+  background: var(--warn);
+  color: #000;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+@media (max-width: 640px) {
+  .search-hit { grid-template-columns: 40px 1fr; }
+}

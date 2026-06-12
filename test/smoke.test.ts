@@ -159,6 +159,16 @@ test("GET /api/observability returns an aggregate + metrics snapshot + journal s
   assert.ok(o.journal && typeof o.journal.events === "number" && typeof o.journal.bytes === "number");
 });
 
+test("GET /api/search finds seeded content; short query is rejected", async () => {
+  const r = await get("/api/search?q=line");
+  assert.equal(r.status, 200);
+  const d = JSON.parse(r.body);
+  assert.ok(d.files.some((f: { path: string }) => f.path === "hello.txt"));
+  assert.ok(d.totalMatches >= 3);
+  const short = await get("/api/search?q=l");
+  assert.equal(short.status, 400);
+});
+
 test("GET /api/journal returns a filtered slice + summary", async () => {
   const r = await get("/api/journal?kind=audit&limit=50");
   assert.equal(r.status, 200);

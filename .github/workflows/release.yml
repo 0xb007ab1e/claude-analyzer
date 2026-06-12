@@ -1,0 +1,70 @@
+name: Release
+
+# Cut a GitHub Release when a SemVer tag is pushed (e.g. v0.1.0).
+on:
+  push:
+    tags: ["v*.*.*"]
+
+# Default to read-only; the release job opts into contents:write.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+      - name: Frontend syntax check
+        run: node --check public/app.js
+      # Don't release a tag that fails the gate (tests + coverage).
+      - name: Tests + coverage gate
+        run: >
+          node --experimental-strip-types --test --experimental-test-coverage
+          --test-coverage-lines=90
+          --test-coverage-branches=88
+          --test-coverage-functions=95
+          'test/**/*.test.ts'
+
+  release:
+    name: Release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create the release
+    steps:
+      - name: Checkout (at the tag)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Extract this version's CHANGELOG section
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          # Print the body under "## [VER] …" up to the next "## [" heading,
+          # dropping link-reference lines like "[0.1.0]: https://…".
+          awk -v ver="$VER" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && /^## \[/ { exit }
+            grab && /^\[[^]]+\]: http/ { next }
+            grab { print }
+          ' CHANGELOG.md | sed '/./,$!d' > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::error::No CHANGELOG section found for ${VER}"
+            exit 1
+          fi
+          echo "----- release notes -----"; cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file RELEASE_NOTES.md \
+            --verify-tag

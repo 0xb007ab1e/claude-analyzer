@@ -13,6 +13,7 @@ import {
   sessionUuid,
   decodeProjectCwd,
   sessionInfo,
+  extractSessionCwd,
 } from "../src/sessions.ts";
 
 // ---------------------------------------------------------------------------
@@ -173,4 +174,35 @@ test("sessionInfo: isSession=false for empty string", () => {
   assert.equal(info.isSession, false);
   assert.equal(info.cwd, null);
   assert.equal(info.uuid, null);
+});
+
+// ---------------------------------------------------------------------------
+// extractSessionCwd
+// ---------------------------------------------------------------------------
+
+test("extractSessionCwd returns the first record's cwd (the real path)", () => {
+  const jsonl =
+    '{"type":"meta","sessionId":"x"}\n' +
+    '{"type":"user","cwd":"/home/b007ab1e/_src/_dev/tmux-session","message":{}}\n';
+  assert.equal(extractSessionCwd(jsonl), "/home/b007ab1e/_src/_dev/tmux-session");
+});
+
+test("extractSessionCwd skips blank and non-JSON lines", () => {
+  const jsonl = '\n   \nnot json\n{"role":"user","cwd":"/work/proj"}\n';
+  assert.equal(extractSessionCwd(jsonl), "/work/proj");
+});
+
+test("extractSessionCwd returns null when no record has a cwd", () => {
+  assert.equal(extractSessionCwd('{"type":"meta"}\n{"role":"user","message":{}}\n'), null);
+  assert.equal(extractSessionCwd(""), null);
+});
+
+test("extractSessionCwd ignores non-string / empty cwd values", () => {
+  assert.equal(extractSessionCwd('{"cwd":123}\n{"cwd":""}\n{"cwd":"/real"}\n'), "/real");
+});
+
+test("extractSessionCwd respects the maxLines scan limit", () => {
+  const jsonl = "{}\n".repeat(10) + '{"cwd":"/late"}\n';
+  assert.equal(extractSessionCwd(jsonl, 5), null);
+  assert.equal(extractSessionCwd(jsonl, 50), "/late");
 });

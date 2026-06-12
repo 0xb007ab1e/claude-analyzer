@@ -14,9 +14,35 @@
  * informational only and is surfaced as `exists: boolean`.
  */
 
-import { readdir, stat } from "node:fs/promises";
+import { readdir, stat, open } from "node:fs/promises";
 import { join } from "node:path";
 import { safeResolveAsync, toRelative } from "./paths.ts";
+import { extractSessionCwd } from "./sessions.ts";
+
+/** Bytes of the newest session file read to recover the real cwd. */
+const CWD_PROBE_BYTES = 65536;
+
+/**
+ * Read the real working directory recorded in a project's newest session file.
+ * Only the first {@link CWD_PROBE_BYTES} are read (the cwd appears early), so
+ * this stays cheap even for multi-MB transcripts.
+ *
+ * @param fileAbs  Absolute path to the newest `.jsonl` session file.
+ * @returns        The recorded cwd, or `null` if unreadable / not present.
+ */
+async function readSessionCwd(fileAbs: string): Promise<string | null> {
+  let fh;
+  try {
+    fh = await open(fileAbs, "r");
+    const buf = Buffer.alloc(CWD_PROBE_BYTES);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    return extractSessionCwd(buf.subarray(0, bytesRead).toString("utf8"));
+  } catch {
+    return null;
+  } finally {
+    await fh?.close();
+  }
+}
 
 /** One session file inside a project directory. */
 export interface SessionEntry {
@@ -34,8 +60,10 @@ export interface SessionEntry {
 export interface ProjectEntry {
   /** The raw encoded directory name (as stored on disk). */
   encoded: string;
-  /** Best-effort decoded working-directory path (heuristic — may be wrong for paths with literal dashes). */
+  /** Working-directory path: exact when read from session content, else a best-effort decode of the dir name. */
   cwd: string;
+  /** True when `cwd` came from session content (reliable); false when heuristically decoded. */
+  cwdExact: boolean;
   /** True when `cwd` exists on disk at the time of the call. */
   exists: boolean;
   /** Total number of session (`.jsonl`) files present in the directory. */
@@ -166,12 +194,24 @@ export async function listProjects(root: string): Promise<ProjectEntry[]> {
 
     const lastUsed = sessionFiles.length > 0 ? (sessionFiles[0]?.mtime ?? 0) : 0;
 
-    const cwd = decodeProjectCwd(encoded);
+    // Prefer the real cwd recorded in the newest session; fall back to the
+    // lossy directory-name decode only when no session content is available.
+    let cwd = decodeProjectCwd(encoded);
+    let cwdExact = false;
+    const newest = sessionFiles[0];
+    if (newest) {
+      const realCwd = await readSessionCwd(join(projectAbs, newest.name));
+      if (realCwd) {
+        cwd = realCwd;
+        cwdExact = true;
+      }
+    }
     const exists = await cwdExists(cwd);
 
     results.push({
       encoded,
       cwd,
+      cwdExact,
       exists,
       sessionCount,
       sessions,

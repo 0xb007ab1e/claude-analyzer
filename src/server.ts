@@ -18,7 +18,7 @@ import { loadConfig, ConfigError, type Config } from "./config.ts";
 import { listDir, readFileClassified, writeFileGuarded, BACKUP_DIR } from "./files.ts";
 import { PathError, toRelative } from "./paths.ts";
 import { searchTree } from "./xref.ts";
-import { sessionInfo } from "./sessions.ts";
+import { sessionInfo, extractSessionCwd } from "./sessions.ts";
 import { readSettings } from "./settings.ts";
 import { collectUsage } from "./usage.ts";
 import { collectMtimes, summarize } from "./activity.ts";
@@ -234,8 +234,14 @@ async function handle(
       if (reveal) log("audit", `reveal raw content: ${rel}`);
       const fileData = await readFileClassified(config.root, rel, reveal);
       // Annotate transcript files with session metadata so the UI can render a
-      // rich timeline instead of the generic JSONL view.
-      sendJson(res, 200, { ...fileData, session: sessionInfo(fileData.path) });
+      // rich timeline instead of the generic JSONL view. Prefer the real cwd
+      // recorded in the transcript over the lossy directory-name decode.
+      const session = sessionInfo(fileData.path);
+      if (session.isSession && typeof fileData.content === "string") {
+        const realCwd = extractSessionCwd(fileData.content);
+        if (realCwd) session.cwd = realCwd;
+      }
+      sendJson(res, 200, { ...fileData, session });
       return;
     }
 

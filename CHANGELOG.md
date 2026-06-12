@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-06-12
+
+### Added
+
+- **Optional access-token auth (LAN/Tailscale hardening).** Set `CA_TOKEN` (or
+  `--token-file` / `--token`) to require a bearer token on every `/api/*`
+  request — defense in depth on top of the Host allowlist for non-loopback
+  binds. The static UI shell still loads and prompts for the token (held in
+  memory, never persisted); it travels as an `Authorization: Bearer` header, or
+  a `?token=` query for `EventSource` / `<img>` / `<embed>` / downloads.
+  Comparison is constant-time. **Off by default** — loopback use needs no token.
+  `/api/config` now reports `authRequired`.
+
 ## [0.1.8] - 2026-06-12
 
 ### Added
@@ -172,6 +185,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.9]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.9
 [0.1.8]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.8
 [0.1.7]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.7
 [0.1.6]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.6

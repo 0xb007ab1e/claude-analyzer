@@ -5,10 +5,10 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, ConfigError } from "../src/config.ts";
 
 function tmpDir(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "ca-config-")));
@@ -40,4 +40,32 @@ test("a non-existent source path degrades to null (feature stays off)", () => {
   const root = tmpDir();
   const cfg = loadConfig(["--root", root, "--source", join(root, "nope-not-here")], {});
   assert.equal(cfg.sourceDir, null);
+});
+
+test("token: defaults to null (auth disabled)", () => {
+  const cfg = loadConfig(["--root", tmpDir()], {});
+  assert.equal(cfg.token, null);
+});
+
+test("token: CA_TOKEN env takes precedence over --token", () => {
+  const cfg = loadConfig(["--root", tmpDir(), "--token", "fromflag"], { CA_TOKEN: "fromenv" });
+  assert.equal(cfg.token, "fromenv");
+});
+
+test("token: --token-file is read and trimmed", () => {
+  const root = tmpDir();
+  const file = join(root, "tok");
+  writeFileSync(file, "  filetoken\n");
+  const cfg = loadConfig(["--root", root, "--token-file", file], {});
+  assert.equal(cfg.token, "filetoken");
+});
+
+test("token: blank/whitespace value disables auth", () => {
+  const cfg = loadConfig(["--root", tmpDir(), "--token", "   "], {});
+  assert.equal(cfg.token, null);
+});
+
+test("token: an unreadable --token-file fails fast", () => {
+  const root = tmpDir();
+  assert.throws(() => loadConfig(["--root", root, "--token-file", join(root, "missing")], {}), ConfigError);
 });

@@ -38,6 +38,7 @@ import { gatherExtensions } from "./extensions.ts";
 import { listProjects } from "./projects.ts";
 import { buildGraph, trimGraph, type GraphStats } from "./graph.ts";
 import { runAudit } from "./auditHandler.ts";
+import { isAuthorized } from "./auth.ts";
 import { Metrics, routeLabel } from "./metrics.ts";
 import { Journal, resolveJournalDir, aggregateEvents, summarizeEvents } from "./journal.ts";
 
@@ -135,9 +136,14 @@ function main(): void {
         `  bind:   ${config.host}:${config.port}\n` +
         `  open:   ${urls}\n` +
         `  hosts:  ${config.allowedHosts.join(", ")}\n` +
+        `  auth:   ${config.token ? "🔒 token required on /api/*" : "none (Host allowlist only)"}\n` +
         (config.host !== "127.0.0.1" && config.host !== "localhost" && config.host !== "::1"
           ? `\n  ⚠ Bound to a non-loopback interface — reachable from your network.\n` +
-            `    Only allow-listed Host headers are served; don't expose this publicly.\n`
+            `    Only allow-listed Host headers are served; don't expose this publicly.\n` +
+            (config.token ? "" : `    Tip: set CA_TOKEN to require an access token (defense in depth).\n`)
+          : "") +
+        (config.token && process.argv.includes("--token")
+          ? `\n  ⚠ Token passed via --token is visible in process listings; prefer CA_TOKEN or --token-file.\n`
           : "") +
         `\nSecrets are redacted by default; click “Reveal” on a file to show raw values.\n` +
         `Press Ctrl+C to stop.\n`,
@@ -156,6 +162,19 @@ async function handle(
   if (!isAllowedHost(req.headers.host, config.allowedHosts)) {
     sendJson(res, 403, { error: "forbidden host" });
     return;
+  }
+
+  // Optional bearer-token auth (defense in depth for non-loopback binds). Gates
+  // the whole API surface; the static SPA shell loads freely and prompts for the
+  // token on a 401. The token may be a Bearer header or a `?token=` query value
+  // (the latter for EventSource / <img>/<embed> src, which can't set headers).
+  if (config.token) {
+    const gatePath = new URL(req.url ?? "/", "http://localhost");
+    if (gatePath.pathname.startsWith("/api/") &&
+        !isAuthorized(config.token, req.headers.authorization, gatePath.searchParams.get("token"))) {
+      sendJson(res, 401, { error: "unauthorized — access token required" });
+      return;
+    }
   }
 
   // Server-Sent Events stream: directory-watch (`fschange`) + dev hot-reload
@@ -182,6 +201,7 @@ async function handle(
         root: config.root,
         allowWrite: config.allowWrite,
         reload: config.reload,
+        authRequired: !!config.token,
       });
       return;
     }

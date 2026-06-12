@@ -38,14 +38,15 @@ function freePort(): Promise<number> {
   });
 }
 
-/** Minimal HTTP GET that allows overriding the Host header (fetch forbids it). */
-function get(
+/** Minimal HTTP GET to an explicit port; allows overriding any header. */
+function getOn(
+  p: number,
   path: string,
   headers: Record<string, string> = {},
 ): Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
   return new Promise((resolve, reject) => {
     const req = request(
-      { host: "127.0.0.1", port, path, method: "GET", headers },
+      { host: "127.0.0.1", port: p, path, method: "GET", headers },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c) => chunks.push(c as Buffer));
@@ -57,6 +58,11 @@ function get(
     req.on("error", reject);
     req.end();
   });
+}
+
+/** GET against the shared (token-less) smoke server. */
+function get(path: string, headers: Record<string, string> = {}) {
+  return getOn(port, path, headers);
 }
 
 before(async () => {
@@ -178,4 +184,42 @@ test("GET /api/journal returns a filtered slice + summary", async () => {
   assert.deepEqual(d.filter.kinds, ["audit"]);
   // Every returned event must match the requested kind.
   assert.ok(d.events.every((e: { kind: string }) => e.kind === "audit"));
+});
+
+test("a token-protected server gates /api/* but serves the static shell", async () => {
+  const troot = realpathSync(mkdtempSync(join(tmpdir(), "ca-smoke-tok-")));
+  const tstate = realpathSync(mkdtempSync(join(tmpdir(), "ca-smoke-tokstate-")));
+  const TOKEN = "smoke-secret-token";
+  const tport = await freePort();
+  const tchild = spawn(
+    process.execPath,
+    ["--experimental-strip-types", serverEntry, "--root", troot, "--port", String(tport), "--no-reload"],
+    { env: { ...process.env, XDG_STATE_HOME: tstate, CA_TOKEN: TOKEN }, stdio: "ignore" },
+  );
+  try {
+    // Ready once it responds at all (a gated /api/config answers 401).
+    const deadline = Date.now() + 8000;
+    for (;;) {
+      try {
+        const probe = await getOn(tport, "/api/config");
+        if (probe.status === 401 || probe.status === 200) break;
+      } catch {
+        /* not up yet */
+      }
+      if (Date.now() > deadline) throw new Error("token server did not start");
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    // Static shell is served without a token.
+    assert.equal((await getOn(tport, "/")).status, 200);
+    // API is gated.
+    assert.equal((await getOn(tport, "/api/config")).status, 401);
+    assert.equal((await getOn(tport, "/api/config", { authorization: "Bearer wrong" })).status, 401);
+    // Authorized via header and via query param.
+    assert.equal((await getOn(tport, "/api/config", { authorization: `Bearer ${TOKEN}` })).status, 200);
+    assert.equal((await getOn(tport, `/api/config?token=${TOKEN}`)).status, 200);
+    const ok = JSON.parse((await getOn(tport, "/api/config", { authorization: `Bearer ${TOKEN}` })).body);
+    assert.equal(ok.authRequired, true);
+  } finally {
+    tchild.kill("SIGTERM");
+  }
 });

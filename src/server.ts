@@ -10,7 +10,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { watch, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname, sep } from "node:path";
@@ -25,13 +25,14 @@ import {
   contentType,
   BACKUP_DIR,
 } from "./files.ts";
-import { PathError, toRelative } from "./paths.ts";
+import { PathError } from "./paths.ts";
 import { searchTree } from "./xref.ts";
 import { searchTreeText, SearchError } from "./search.ts";
 import { sessionInfo, extractSessionCwd } from "./sessions.ts";
 import { readSettings } from "./settings.ts";
 import { collectUsage } from "./usage.ts";
-import { collectMtimes, summarize } from "./activity.ts";
+import { summarize } from "./activity.ts";
+import { TreeCache } from "./treecache.ts";
 import { listHistory, getHistoryEntry, restoreHistoryEntry } from "./history.ts";
 import { gatherExtensions } from "./extensions.ts";
 import { listProjects } from "./projects.ts";
@@ -60,6 +61,8 @@ const BOOT_ID = `${Date.now().toString(36)}-${process.pid.toString(36)}`;
  */
 let metrics: Metrics | null = null;
 let journal: Journal | null = null;
+/** Live file-tree cache backing /api/graph and /api/activity (no per-request walk). */
+let treeCache: TreeCache | null = null;
 
 /** Static file content types. */
 const STATIC_TYPES: Record<string, string> = {
@@ -69,58 +72,6 @@ const STATIC_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
 };
-
-/**
- * Maximum number of files visited by {@link walkFiles}.
- * Prevents runaway I/O on very large trees while still covering typical roots.
- */
-const WALK_FILE_CAP = 20_000;
-
-/**
- * Recursively collect all file paths under `dir`, confined to `root`.
- *
- * Skips `.git`, `.analyzer-backups`, and `node_modules` subtrees. Stops once
- * {@link WALK_FILE_CAP} files have been found and returns the partial list with
- * the `capped` flag set to true.
- *
- * @param root    Absolute, already-realpath'd root (confinement boundary).
- * @param dir     Absolute starting directory (must be inside root).
- * @param out     Accumulator array of root-relative forward-slash paths.
- * @param capped  [out] set to true when the file cap is reached.
- */
-async function walkFiles(
-  root: string,
-  dir: string,
-  out: string[],
-  capped: { value: boolean },
-): Promise<void> {
-  if (capped.value) return;
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return; // unreadable directory — skip silently
-  }
-  for (const d of entries) {
-    if (capped.value) return;
-    // Skip well-known noise directories.
-    if (d.name === ".git" || d.name === ".analyzer-backups" || d.name === "node_modules") {
-      continue;
-    }
-    const abs = join(dir, d.name);
-    // Confine: skip anything that resolves outside root (e.g. symlinks).
-    if (!abs.startsWith(root + sep) && abs !== root) continue;
-    if (d.isDirectory()) {
-      await walkFiles(root, abs, out, capped);
-    } else if (d.isFile() || d.isSymbolicLink()) {
-      out.push(toRelative(root, abs));
-      if (out.length >= WALK_FILE_CAP) {
-        capped.value = true;
-        return;
-      }
-    }
-  }
-}
 
 function main(): void {
   let config: Config;
@@ -138,6 +89,7 @@ function main(): void {
   // OUTSIDE the watched root (so the watcher never observes its own writes).
   metrics = new Metrics(BOOT_ID, Date.now());
   journal = new Journal(resolveJournalDir(config.root));
+  treeCache = new TreeCache(config.root);
 
   // Connected SSE clients. The server watches the root and pushes `fschange`
   // events (the live directory-watch feature) to all of them; under --reload it
@@ -271,8 +223,9 @@ async function handle(
     if (path === "/api/activity" && req.method === "GET") {
       const rawDays = url.searchParams.get("days");
       const days = Math.max(1, Math.min(365, parseInt(rawDays ?? "90", 10) || 90));
-      const { mtimesMs, truncated } = await collectMtimes(config.root);
-      sendJson(res, 200, summarize(mtimesMs, days, Date.now(), truncated));
+      const now = Date.now();
+      await treeCache!.ensureFresh(now);
+      sendJson(res, 200, summarize(treeCache!.mtimes(), days, now, treeCache!.truncated));
       return;
     }
 
@@ -465,15 +418,14 @@ async function handle(
     }
 
     if (path === "/api/graph" && req.method === "GET") {
-      const filePaths: string[] = [];
-      const capped = { value: false };
-      await walkFiles(config.root, config.root, filePaths, capped);
+      await treeCache!.ensureFresh(Date.now());
+      const filePaths = treeCache!.paths();
       const rawGraph = buildGraph(filePaths);
       const trimmed = trimGraph(rawGraph);
       const stats: GraphStats = {
         files: filePaths.length,
         uuids: rawGraph.nodes.filter((n) => n.type === "uuid").length,
-        truncated: trimmed.truncated || capped.value,
+        truncated: trimmed.truncated || treeCache!.truncated,
       };
       sendJson(res, 200, { nodes: trimmed.nodes, edges: trimmed.edges, stats });
       return;
@@ -630,6 +582,7 @@ function startWatchers(clients: Set<ServerResponse>, config: Config): void {
     for (const { path, kind } of changes) {
       metrics?.incr("fschange");
       void journal?.record({ ts: now, kind: "fschange", path, op: kind });
+      void treeCache?.note(path); // keep the tree cache current incrementally
     }
   };
   try {
@@ -645,6 +598,9 @@ function startWatchers(clients: Set<ServerResponse>, config: Config): void {
   } catch (e) {
     const msg = (e as Error).message;
     log("error", `root watcher failed: ${msg}`);
+    // Without a watcher the cache can't be maintained incrementally — fall back
+    // to TTL-only freshness and force a rebuild on the next read.
+    treeCache?.markStale();
     // Tell clients once they connect (best-effort, slight delay).
     setTimeout(() => broadcast(clients, "watcherror", JSON.stringify({ message: msg })), 500);
   }

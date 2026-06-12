@@ -281,14 +281,15 @@ function renderToolbar(data) {
     reveal.classList.add("hidden");
   }
 
-  // Wrap toggle is relevant for any text-ish content.
+  // Wrap toggle is relevant for any text-ish content (incl. chunked text).
   $("#btn-wrap").classList.toggle("hidden", data.type === "binary");
 
   // Source xref — always shown when a file is open (server will say if unavailable).
   $("#btn-xref").classList.remove("hidden");
 
-  // Edit only for text-ish files when server allows writing.
-  if (state.allowWrite && data.type !== "binary") {
+  // Edit only for fully-loaded text files we can write back; not binary, not
+  // chunked (we never hold the whole over-cap file in the browser).
+  if (state.allowWrite && data.type !== "binary" && !data.chunked) {
     edit.classList.remove("hidden");
   } else {
     edit.classList.add("hidden");
@@ -320,10 +321,12 @@ function renderContent(data) {
   const viewer = $("#viewer");
   viewer.innerHTML = "";
   if (data.type === "binary") {
-    const d = document.createElement("div");
-    d.className = "empty";
-    d.textContent = data.note || "Binary file.";
-    viewer.appendChild(d);
+    viewer.appendChild(renderBinaryViewer(data));
+    return;
+  }
+  if (data.chunked) {
+    // Over-cap text/JSONL: load the body in pages via /api/file-lines.
+    viewer.appendChild(renderChunked(data));
     return;
   }
   if (data.type === "jsonl") {
@@ -351,6 +354,147 @@ function renderContent(data) {
   pre.className = "code";
   pre.textContent = data.content;
   viewer.appendChild(pre);
+}
+
+/** Render a binary file: inline image, embedded PDF, or a download affordance. */
+function renderBinaryViewer(data) {
+  const wrap = document.createElement("div");
+  wrap.className = "binary-view";
+  const rawUrl = `/api/raw?path=${encodeURIComponent(data.path)}`;
+
+  // Toolbar: note + open/download links.
+  const bar = document.createElement("div");
+  bar.className = "binary-bar";
+  const meta = document.createElement("span");
+  meta.className = "file-meta";
+  meta.textContent = data.note || "Binary file.";
+  bar.appendChild(meta);
+  const spacer = document.createElement("span");
+  spacer.className = "spacer";
+  bar.appendChild(spacer);
+  if (data.viewer === "image" || data.viewer === "pdf") {
+    const open = document.createElement("a");
+    open.className = "btn";
+    open.textContent = "↗ Open";
+    open.href = rawUrl;
+    open.target = "_blank";
+    open.rel = "noopener noreferrer";
+    bar.appendChild(open);
+  }
+  const dl = document.createElement("a");
+  dl.className = "btn";
+  dl.textContent = "⬇ Download";
+  dl.href = `${rawUrl}&download=1`;
+  dl.setAttribute("download", "");
+  bar.appendChild(dl);
+  wrap.appendChild(bar);
+
+  if (data.viewer === "image") {
+    const img = document.createElement("img");
+    img.className = "binary-image";
+    img.src = rawUrl;
+    img.alt = data.path;
+    img.loading = "lazy";
+    wrap.appendChild(img);
+  } else if (data.viewer === "pdf") {
+    const emb = document.createElement("embed");
+    emb.className = "binary-pdf";
+    emb.type = "application/pdf";
+    emb.src = rawUrl;
+    wrap.appendChild(emb);
+  } else {
+    const note = document.createElement("div");
+    note.className = "empty";
+    note.textContent = "Not previewable — use Download.";
+    wrap.appendChild(note);
+  }
+  return wrap;
+}
+
+/** Dispatch an over-cap (chunked) file to the right paged renderer. */
+function renderChunked(data) {
+  if (data.type === "jsonl" && data.session && data.session.isSession) {
+    return renderChunkedSession(data);
+  }
+  return renderChunkedText(data);
+}
+
+/**
+ * Shared "status + content + Load more" scaffold for chunked views. The body
+ * element is created with `bodyTag`; `onPage(page, body)` appends each page.
+ */
+function chunkScaffold(data, pageSize, bodyTag, onPage) {
+  const status = document.createElement("div");
+  status.className = "chunk-status";
+  const body = document.createElement(bodyTag);
+  const more = document.createElement("button");
+  more.className = "btn primary chunk-more";
+  more.textContent = "Load more";
+  let from = 0;
+  let loading = false;
+  async function load() {
+    if (loading) return;
+    loading = true;
+    more.disabled = true;
+    more.textContent = "Loading…";
+    let page;
+    try {
+      page = await api(
+        `/api/file-lines?path=${encodeURIComponent(data.path)}&from=${from}&count=${pageSize}${data.revealed ? "&reveal=1" : ""}`,
+      );
+    } catch (e) {
+      status.textContent = `Error: ${e.message}`;
+      loading = false;
+      return;
+    }
+    onPage(page, body);
+    from = page.from + page.lines.length;
+    const unit = data.type === "jsonl" ? "records" : "lines";
+    status.textContent = `Showing ${Math.min(from, page.total).toLocaleString()} of ${page.total.toLocaleString()} ${unit}`;
+    more.classList.toggle("hidden", !page.hasMore);
+    more.disabled = false;
+    more.textContent = "Load more";
+    loading = false;
+  }
+  more.addEventListener("click", load);
+  return { status, body, more, load };
+}
+
+/** Chunked Claude transcript: header + paged chat bubbles. */
+function renderChunkedSession(data) {
+  const wrap = document.createElement("div");
+  wrap.className = "session-wrap";
+  wrap.appendChild(renderSessionHeader(data.session));
+  const s = chunkScaffold(data, 200, "div", (page, body) => {
+    for (const ln of page.lines) {
+      if (ln.text.trim() === "") continue;
+      let obj = null;
+      try {
+        obj = JSON.parse(ln.text);
+      } catch {
+        /* keep raw */
+      }
+      body.appendChild(renderSessionBubble(ln.n + 1, obj, ln.text));
+    }
+  });
+  s.body.className = "session-timeline";
+  wrap.append(s.status, s.body, s.more);
+  s.load();
+  return wrap;
+}
+
+/** Chunked plain text/JSONL: paged <pre>. */
+function renderChunkedText(data) {
+  const wrap = document.createElement("div");
+  const s = chunkScaffold(data, 1000, "pre", (page, body) => {
+    body.appendChild(
+      document.createTextNode(page.lines.map((l) => l.text).join("\n") + (page.hasMore ? "\n" : "")),
+    );
+  });
+  s.body.className = "code";
+  wrap.append(s.status, s.body, s.more);
+  s.load();
+  return wrap;
 }
 
 function renderJson(text) {

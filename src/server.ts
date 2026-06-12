@@ -10,12 +10,21 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile, readdir } from "node:fs/promises";
-import { watch } from "node:fs";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { watch, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname, sep } from "node:path";
 import { loadConfig, ConfigError, type Config } from "./config.ts";
-import { listDir, readFileClassified, writeFileGuarded, BACKUP_DIR } from "./files.ts";
+import {
+  listDir,
+  readFileClassified,
+  writeFileGuarded,
+  readFileLines,
+  resolveInRoot,
+  extOf,
+  contentType,
+  BACKUP_DIR,
+} from "./files.ts";
 import { PathError, toRelative } from "./paths.ts";
 import { searchTree } from "./xref.ts";
 import { sessionInfo, extractSessionCwd } from "./sessions.ts";
@@ -242,6 +251,38 @@ async function handle(
         if (realCwd) session.cwd = realCwd;
       }
       sendJson(res, 200, { ...fileData, session });
+      return;
+    }
+
+    // Chunked line window for large text/JSONL files (streamed server-side).
+    if (path === "/api/file-lines" && req.method === "GET") {
+      const rel = url.searchParams.get("path") ?? "";
+      const from = parseInt(url.searchParams.get("from") ?? "0", 10) || 0;
+      const count = parseInt(url.searchParams.get("count") ?? "200", 10) || 200;
+      const reveal = url.searchParams.get("reveal") === "1";
+      if (reveal) log("audit", `reveal raw lines: ${rel}`);
+      sendJson(res, 200, await readFileLines(config.root, rel, from, count, reveal));
+      return;
+    }
+
+    // Raw bytes of a confined file, for inline image/PDF viewing or download.
+    if (path === "/api/raw" && req.method === "GET") {
+      const rel = url.searchParams.get("path") ?? "";
+      const abs = await resolveInRoot(config.root, rel);
+      const st = await stat(abs); // throws ENOENT → 404 below
+      if (st.isDirectory()) throw new PathError("path is a directory", 400);
+      const download = url.searchParams.get("download") === "1";
+      const base = rel.split("/").pop() ?? "file";
+      res.writeHead(200, {
+        "content-type": contentType(extOf(rel)),
+        "content-length": String(st.size),
+        "cache-control": "no-store",
+        // inline for viewers; attachment forces a download.
+        "content-disposition": `${download ? "attachment" : "inline"}; filename="${base.replace(/[^\w.\-]/g, "_")}"`,
+        // images/pdf only; never let the browser treat this as active content.
+        "x-content-type-options": "nosniff",
+      });
+      createReadStream(abs).pipe(res);
       return;
     }
 

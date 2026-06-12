@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-06-12
+
+### Added
+
+- **Chunked loader for large text/JSONL.** Over-cap transcripts no longer show
+  "too large to display" — they are streamed in pages via
+  `GET /api/file-lines?path&from&count&reveal` (server-side line windowing,
+  capped at 2000 lines/request, redacted per line, with `total`/`hasMore`). The
+  session timeline and a plain-text view render incrementally with a **Load
+  more** control, so multi-MiB sessions open fine. Edit is disabled for chunked
+  files (the whole file is never held client-side).
+- **Native binary viewers.** `GET /api/raw?path[&download=1]` streams raw bytes
+  with the correct `Content-Type` (root-confined, `X-Content-Type-Options:
+  nosniff`, inline or attachment). The UI renders **images** inline, **PDFs** in
+  an embedded viewer, and a **Download / Open** bar for any other binary.
+
 ## [0.1.3] - 2026-06-12
 
 ### Fixed
@@ -80,6 +96,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.4]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.4
 [0.1.3]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.3
 [0.1.2]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.2
 [0.1.1]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.1

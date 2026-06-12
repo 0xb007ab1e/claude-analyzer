@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-06-12
+
+### Fixed
+
+- Projects panel no longer shows spurious "missing" badges. The working
+  directory is now read from the project's session transcript (the real `cwd`)
+  instead of the lossy `projects/` directory-name decode, so existence checks
+  and displayed/friendly names are accurate. The session-viewer header uses the
+  same real cwd.
+
 ## [0.1.2] - 2026-06-12
 
 ### Added
@@ -70,6 +80,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.3]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.3
 [0.1.2]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.2
 [0.1.1]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.1
 [0.1.0]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.0

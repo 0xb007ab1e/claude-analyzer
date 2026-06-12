@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-06-12
+
+### Added
+
+- **Observability tracker.** A new **📈 Observability** view surfaces the
+  server's own RED metrics (request rate, error rate, latency avg/p95/max,
+  uptime, memory) alongside a **persistent event journal** that records
+  filesystem changes, secret reveals, writes, and restores over time — so usage
+  of the `.claude` folder is visible *historically*, across restarts, not just
+  live. The journal is stored in the XDG state directory **outside** the watched
+  root (no watcher feedback loop) and holds metadata only — paths and event
+  kinds, never file contents or revealed secrets. Also exposed as JSON at
+  `GET /api/metrics` and `GET /api/observability?days=N`.
+
+### Tooling
+
+- Added an end-to-end HTTP **smoke test** that boots the real server as a child
+  process and exercises the API (config/list/file-lines/raw, path-traversal
+  rejection, disallowed-Host rejection, metrics, observability), making the
+  server's I/O paths e2e-covered.
+
 ## [0.1.4] - 2026-06-12
 
 ### Added
@@ -96,6 +117,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.5]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.5
 [0.1.4]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.4
 [0.1.3]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.3
 [0.1.2]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.2

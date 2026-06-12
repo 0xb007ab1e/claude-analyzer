@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-06-12
+
+### Added
+
+- Global **Friendly ⇄ UUID name toggle** (Views menu + graph controls): show
+  friendly project-derived names (path minus directory identifiers) or raw
+  UUIDs / full paths across the relationship graph, Projects, Usage, and the
+  session viewer. Persisted; graph search matches both forms.
+
+### Fixed
+
+- Relationship-graph overlay header now renders cleanly on mobile — the header
+  row wraps, the long stats line is hidden, and the controls stack.
+
 ## [0.1.1] - 2026-06-12
 
 ### Added
@@ -56,5 +70,6 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.2]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.2
 [0.1.1]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.1
 [0.1.0]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.0

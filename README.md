@@ -35,6 +35,10 @@ directly via native type-stripping).
 - **Find in file** (⌕ Find) — search within the open file with match count and
   next/prev, highlighting matches via the CSS Custom Highlight API (no DOM
   rewriting, so it works across every render mode). Esc to close.
+- **Compare** (⇄ Compare) — diff two files: open one, click Compare, then pick a
+  second (from the tree or search) for a side-by-side line diff. Redacted by
+  default (secrets masked on both sides); Reveal re-runs over raw contents.
+  Served by `/api/diff`; binary/over-large files are refused.
 - **Edit & save** text files, with guardrails (see below).
 - **Redact secrets by default**; revealing raw contents is an explicit action.
 

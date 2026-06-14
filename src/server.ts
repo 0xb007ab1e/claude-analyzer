@@ -28,6 +28,7 @@ import {
 import { PathError } from "./paths.ts";
 import { searchTree } from "./xref.ts";
 import { searchTreeText, SearchError } from "./search.ts";
+import { diffLines } from "./diff.ts";
 import { sessionInfo, extractSessionCwd } from "./sessions.ts";
 import { readSettings } from "./settings.ts";
 import { collectUsage } from "./usage.ts";
@@ -318,6 +319,32 @@ async function handle(
         if (realCwd) session.cwd = realCwd;
       }
       sendJson(res, 200, { ...fileData, session });
+      return;
+    }
+
+    // Line-level diff between two confined text files (redacted unless reveal).
+    if (path === "/api/diff" && req.method === "GET") {
+      const a = url.searchParams.get("a") ?? "";
+      const b = url.searchParams.get("b") ?? "";
+      const reveal = url.searchParams.get("reveal") === "1";
+      if (!a || !b) throw new RequestError("both 'a' and 'b' query parameters are required");
+      if (reveal) log("audit", `diff reveal: ${a} vs ${b}`);
+      const fa = await readFileClassified(config.root, a, reveal);
+      const fb = await readFileClassified(config.root, b, reveal);
+      for (const f of [fa, fb] as const) {
+        if (f.type === "binary") throw new RequestError(`cannot diff a binary file: ${f.path}`, 400);
+        if (f.chunked) throw new RequestError(`file too large to diff: ${f.path}`, 400);
+      }
+      sendJson(res, 200, {
+        a,
+        b,
+        aType: fa.type,
+        bType: fb.type,
+        diff: diffLines(String(fa.content ?? ""), String(fb.content ?? "")),
+        redacted: Boolean(fa.redacted || fb.redacted),
+        sensitive: Boolean(fa.sensitive || fb.sensitive),
+        revealed: reveal,
+      });
       return;
     }
 

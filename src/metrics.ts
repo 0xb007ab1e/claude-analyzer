@@ -96,6 +96,7 @@ export function routeLabel(method: string, path: string): string {
     "/api/projects",
     "/api/audit",
     "/api/file",
+    "/api/diff",
     "/api/file-lines",
     "/api/raw",
     "/api/history/list",

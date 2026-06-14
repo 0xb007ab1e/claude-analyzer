@@ -29,6 +29,7 @@ import { PathError } from "./paths.ts";
 import { searchTree } from "./xref.ts";
 import { searchTreeText, SearchError } from "./search.ts";
 import { diffLines } from "./diff.ts";
+import { fuzzyRank } from "./fuzzy.ts";
 import { sessionInfo, extractSessionCwd } from "./sessions.ts";
 import { readSettings } from "./settings.ts";
 import { collectUsage } from "./usage.ts";
@@ -252,6 +253,19 @@ async function handle(
 
     if (path === "/api/projects" && req.method === "GET") {
       sendJson(res, 200, await listProjects(config.root));
+      return;
+    }
+
+    // Fuzzy file paths (from the live tree cache) for the quick-open palette.
+    if (path === "/api/paths" && req.method === "GET") {
+      await treeCache!.ensureFresh(Date.now());
+      const q = url.searchParams.get("q") ?? "";
+      const limit = Math.max(1, Math.min(200, parseInt(url.searchParams.get("limit") ?? "50", 10) || 50));
+      sendJson(res, 200, {
+        paths: fuzzyRank(q, treeCache!.paths(), limit),
+        total: treeCache!.size,
+        truncated: treeCache!.truncated,
+      });
       return;
     }
 

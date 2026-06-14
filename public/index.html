@@ -16,6 +16,7 @@
       <div class="menu">
         <button id="views-btn" class="btn" aria-haspopup="true" aria-expanded="false">▾ Views</button>
         <div id="views-menu" class="views-menu hidden" role="menu" aria-label="Views">
+          <button class="views-item" role="menuitem" data-target="#palette-toggle">⚡ Quick open file</button>
           <button class="views-item" role="menuitem" data-target="#search-toggle">🔍 Search files</button>
           <button class="views-item" role="menuitem" data-target="#log-toggle">🕒 Activity log</button>
           <button class="views-item" role="menuitem" data-target="#projects-toggle">🗂 Projects</button>
@@ -46,6 +47,7 @@
         <button id="history-toggle" class="iconbtn" aria-label="Toggle file history" aria-expanded="false">🕰</button>
         <button id="ext-toggle" class="iconbtn" aria-label="Extensions explorer" aria-expanded="false" title="Hooks / Agents / Skills / Commands / MCP">🧩</button>
         <button id="settings-toggle" class="badge" title="View merged settings, layer breakdown, and .bak diff">⚙ Settings</button>
+        <button id="palette-toggle" class="btn" title="Quick open a file (Ctrl/⌘K)">⚡ Open</button>
         <button id="search-toggle" class="btn" title="Full-text search across the .claude tree">🔍 Search</button>
         <button id="usage-toggle" class="btn" title="Usage &amp; cost dashboard">📊 Usage</button>
         <button id="timeline-toggle" class="btn" aria-label="Open activity timeline" title="Activity timeline — calendar heatmap of file changes">📅 Activity</button>
@@ -271,6 +273,17 @@
         <div id="xref-body" class="xref-body">
           <div class="empty">Loading…</div>
         </div>
+      </div>
+    </div>
+
+    <!-- Quick-open command palette (Ctrl/⌘K) -->
+    <div id="palette" class="palette hidden" role="dialog" aria-modal="true" aria-label="Quick open file">
+      <div class="palette-box">
+        <input id="palette-input" class="palette-input" type="search" autocomplete="off"
+               placeholder="Quick open — type to fuzzy-find a file…" aria-label="Quick open file"
+               role="combobox" aria-expanded="true" aria-controls="palette-results" />
+        <ul id="palette-results" class="palette-results" role="listbox"></ul>
+        <div class="palette-hint">↑↓ navigate · ↵ open · Esc close</div>
       </div>
     </div>
 

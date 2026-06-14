@@ -175,6 +175,17 @@ test("GET /api/search finds seeded content; short query is rejected", async () =
   assert.equal(short.status, 400);
 });
 
+test("GET /api/paths fuzzy-ranks files for quick-open", async () => {
+  const r = await get("/api/paths?q=hello&limit=10");
+  assert.equal(r.status, 200);
+  const d = JSON.parse(r.body);
+  assert.ok(Array.isArray(d.paths));
+  assert.ok(d.paths.includes("hello.txt"), `expected hello.txt in ${JSON.stringify(d.paths)}`);
+  assert.equal(typeof d.total, "number");
+  // Empty query returns some paths (the head of the list).
+  assert.ok(JSON.parse((await get("/api/paths?q=")).body).paths.length > 0);
+});
+
 test("GET /api/diff compares two files, refuses binary, validates params", async () => {
   // Identical content → empty diff.
   const same = await get("/api/diff?a=hello.txt&b=hello.txt");

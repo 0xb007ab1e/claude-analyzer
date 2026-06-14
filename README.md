@@ -25,6 +25,9 @@ directly via native type-stripping).
 ## What it does
 
 - **Browse** the whole `.claude` tree in a lazy-loading file sidebar.
+- **Quick open** (⚡ / **Ctrl·⌘K**) — a command palette to fuzzy-find and open any
+  file by path (ranked server-side from the live tree cache); ↑↓ to navigate, ↵ to
+  open. Served by `/api/paths?q=`.
 - **View** files with type-aware rendering:
   - `.json` — pretty-printed.
   - `.jsonl` — rendered as a list of collapsible records (role/type tagged),

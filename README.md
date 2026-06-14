@@ -27,7 +27,9 @@ directly via native type-stripping).
 - **Browse** the whole `.claude` tree in a lazy-loading file sidebar.
 - **Quick open** (⚡ / **Ctrl·⌘K**) — a command palette to fuzzy-find and open any
   file by path (ranked server-side from the live tree cache); ↑↓ to navigate, ↵ to
-  open. Served by `/api/paths?q=`.
+  open. Served by `/api/paths?q=`. With an empty query it lists your **pinned** (★)
+  and **recently opened** (🕘) files; pin/unpin from the palette or the toolbar
+  (**☆ Pin**). Recents and pins are kept locally (in the browser, not the server).
 - **View** files with type-aware rendering:
   - `.json` — pretty-printed.
   - `.jsonl` — rendered as a list of collapsible records (role/type tagged),

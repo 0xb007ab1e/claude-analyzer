@@ -2998,3 +2998,32 @@ body.nowrap .ln-text {
   color: var(--text-dim);
   font-size: 11px;
 }
+
+/* --- Palette: pin/recent markers + per-row pin toggle -------------------- */
+.palette-item { gap: 6px; }
+.palette-mark {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.palette-item.sel .palette-mark { color: #fff; }
+.palette-pin {
+  flex: 0 0 auto;
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+  opacity: 0;
+}
+.palette-item:hover .palette-pin,
+.palette-item.sel .palette-pin,
+.palette-pin.on { opacity: 1; }
+.palette-pin.on { color: var(--warn); }
+.palette-item.sel .palette-pin { color: #fff; }
+.palette-item.sel .palette-pin.on { color: var(--warn); }
+#btn-pin[aria-pressed="true"] { color: var(--warn); border-color: var(--warn); }

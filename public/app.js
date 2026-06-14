@@ -285,8 +285,19 @@ async function openFile(relPath, reveal) {
   renderToolbar(data);
   renderBanner(data);
   renderContent(data);
+  pushRecent(relPath);
   // Flash the file's folder in the tree so you can see where it lives.
   flashAncestorFolder(relPath);
+}
+
+/** Reflect the open file's pinned state on the toolbar pin button. */
+function updatePinButton() {
+  const btn = document.getElementById("btn-pin");
+  if (!btn) return;
+  const path = state.current && state.current.path;
+  const pinned = !!path && isPinned(path);
+  btn.textContent = pinned ? "★ Pinned" : "☆ Pin";
+  btn.setAttribute("aria-pressed", String(pinned));
 }
 
 /** Lead-in lines kept above the target, and per-page line count, for line view. */
@@ -338,6 +349,7 @@ async function openFileAtLine(relPath, line) {
   renderBanner(data);
   viewer.innerHTML = "";
   viewer.appendChild(renderLineView(relPath, page, line));
+  pushRecent(relPath);
   flashAncestorFolder(relPath);
 }
 
@@ -566,6 +578,10 @@ function renderToolbar(data) {
   // Compare: only for fully-loaded text files (not binary, not chunked, and not
   // the synthetic compare view itself).
   $("#btn-compare").classList.toggle("hidden", data.type === "binary" || !!data.chunked || data.compare === true);
+
+  // Pin: any openable file (by path), except the synthetic compare view.
+  $("#btn-pin").classList.toggle("hidden", data.compare === true || !(state.current && state.current.path));
+  updatePinButton();
 
   // Source xref — always shown when a file is open (server will say if unavailable).
   $("#btn-xref").classList.remove("hidden");
@@ -3820,6 +3836,14 @@ async function init() {
     localStorage.setItem("nowrap", nowrap ? "1" : "0");
   });
 
+  // Pin/unpin the open file (for quick-open's pinned list).
+  $("#btn-pin").addEventListener("click", () => {
+    const p = state.current && state.current.path;
+    if (!p) return;
+    togglePin(p);
+    updatePinButton();
+  });
+
   // Compare: arm "pick a second file" mode; Esc cancels it.
   $("#btn-compare").addEventListener("click", armCompare);
   document.addEventListener("keydown", (e) => {
@@ -5901,12 +5925,48 @@ function renderSearchFile(f, query) {
 // Quick-open command palette (Ctrl/⌘K) — fuzzy-find any file by path.
 // ---------------------------------------------------------------------------
 
-let paletteItems = [];
+// Recents + pinned files (localStorage). Recents are tracked automatically on
+// open; pins are explicit. Both feed the palette's empty-query view.
+const RECENTS_KEY = "recents";
+const PINS_KEY = "pins";
+const RECENTS_MAX = 30;
+
+/** @returns {string[]} */
+function readList(key) {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function getRecents() { return readList(RECENTS_KEY); }
+function getPins() { return readList(PINS_KEY); }
+function isPinned(p) { return getPins().includes(p); }
+
+/** Record a freshly-opened path at the head of the recents list. */
+function pushRecent(p) {
+  if (!p) return;
+  const next = [p, ...getRecents().filter((x) => x !== p)].slice(0, RECENTS_MAX);
+  localStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+}
+
+/** Toggle a pin; returns the new pinned state. */
+function togglePin(p) {
+  if (!p) return false;
+  const pins = getPins();
+  const has = pins.includes(p);
+  const next = has ? pins.filter((x) => x !== p) : [p, ...pins];
+  localStorage.setItem(PINS_KEY, JSON.stringify(next));
+  return !has;
+}
+
+let paletteItems = []; // [{ path, pin, recent }]
 let paletteSel = 0;
 let paletteDebounce = null;
 let paletteSeq = 0;
 
-/** Open the palette and load an initial (unfiltered) list. */
+/** Open the palette (empty query shows pinned + recent). */
 function openPalette() {
   const modal = document.getElementById("palette");
   const input = /** @type {HTMLInputElement} */ (document.getElementById("palette-input"));
@@ -5922,8 +5982,26 @@ function closePalette() {
   document.getElementById("palette")?.classList.add("hidden");
 }
 
-/** Fetch fuzzy-ranked paths for `q` and render them (ignoring stale responses). */
+/**
+ * Populate the palette. An empty query shows pinned then recent files (no
+ * fetch); a non-empty query fuzzy-fetches from /api/paths. Stale responses are
+ * ignored.
+ */
 async function runPalette(q) {
+  if (q === "") {
+    const pins = getPins();
+    const pinned = pins.map((path) => ({ path, pin: true, recent: false }));
+    const recent = getRecents()
+      .filter((path) => !pins.includes(path))
+      .map((path) => ({ path, pin: false, recent: true }));
+    paletteItems = [...pinned, ...recent];
+    paletteSel = 0;
+    if (paletteItems.length) {
+      renderPalette();
+      return;
+    }
+    // Nothing pinned/recent yet — fall through to a default listing.
+  }
   const seq = ++paletteSeq;
   let data;
   try {
@@ -5931,8 +6009,8 @@ async function runPalette(q) {
   } catch {
     return;
   }
-  if (seq !== paletteSeq) return; // a newer query superseded this one
-  paletteItems = data.paths || [];
+  if (seq !== paletteSeq) return; // superseded
+  paletteItems = (data.paths || []).map((path) => ({ path, pin: isPinned(path), recent: false }));
   paletteSel = 0;
   renderPalette();
 }
@@ -5949,10 +6027,15 @@ function renderPalette() {
     ul.appendChild(li);
     return;
   }
-  paletteItems.forEach((p, idx) => {
+  paletteItems.forEach((item, idx) => {
+    const p = item.path;
     const li = document.createElement("li");
     li.className = "palette-item" + (idx === paletteSel ? " sel" : "");
     li.setAttribute("role", "option");
+
+    const mark = document.createElement("span");
+    mark.className = "palette-mark";
+    mark.textContent = item.pin ? "★" : item.recent ? "🕘" : "";
     const slash = p.lastIndexOf("/");
     const dir = document.createElement("span");
     dir.className = "palette-dir";
@@ -5960,7 +6043,22 @@ function renderPalette() {
     const base = document.createElement("span");
     base.className = "palette-base";
     base.textContent = slash >= 0 ? p.slice(slash + 1) : p;
-    li.append(dir, base);
+
+    // Pin toggle (doesn't open the file).
+    const pinBtn = document.createElement("button");
+    pinBtn.className = "palette-pin" + (item.pin ? " on" : "");
+    pinBtn.textContent = item.pin ? "★" : "☆";
+    pinBtn.title = item.pin ? "Unpin" : "Pin";
+    pinBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      item.pin = togglePin(p);
+      pinBtn.textContent = item.pin ? "★" : "☆";
+      pinBtn.classList.toggle("on", item.pin);
+      mark.textContent = item.pin ? "★" : item.recent ? "🕘" : "";
+      if (state.current && state.current.path === p) updatePinButton();
+    });
+
+    li.append(mark, dir, base, pinBtn);
     li.addEventListener("click", () => {
       closePalette();
       openFile(p, false);
@@ -5992,10 +6090,10 @@ function movePalette(delta) {
 
 /** Open the currently-selected path. */
 function choosePalette() {
-  const p = paletteItems[paletteSel];
-  if (!p) return;
+  const item = paletteItems[paletteSel];
+  if (!item) return;
   closePalette();
-  openFile(p, false);
+  openFile(item.path, false);
 }
 
 // Wire the palette: toggle button, input, keys, and global Ctrl/⌘K.

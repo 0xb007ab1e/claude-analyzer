@@ -32,6 +32,9 @@ directly via native type-stripping).
   - `.md` — rendered Markdown (with a minimal, XSS-safe renderer).
   - text / logs — monospace.
   - binary (images, sqlite, etc.) — shown as a note, not dumped.
+- **Find in file** (⌕ Find) — search within the open file with match count and
+  next/prev, highlighting matches via the CSS Custom Highlight API (no DOM
+  rewriting, so it works across every render mode). Esc to close.
 - **Edit & save** text files, with guardrails (see below).
 - **Redact secrets by default**; revealing raw contents is an explicit action.
 

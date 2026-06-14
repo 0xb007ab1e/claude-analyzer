@@ -2871,3 +2871,44 @@ body.nowrap .ln-text {
   color: var(--warn);
   font-weight: 700;
 }
+
+/* --- In-file find bar + highlights ---------------------------------------- */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.find-input {
+  flex: 1 1 auto;
+  min-width: 120px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 9px;
+}
+.find-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.find-count {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 44px;
+  text-align: center;
+}
+.find-bar .btn { padding: 4px 9px; }
+
+/* CSS Custom Highlight API styling (no DOM wrapping). */
+::highlight(find) {
+  background: var(--warn);
+  color: #000;
+}
+::highlight(find-current) {
+  background: var(--accent);
+  color: #fff;
+}

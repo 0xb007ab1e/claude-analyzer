@@ -446,6 +446,11 @@ function renderToolbar(data) {
   // Wrap toggle is relevant for any text-ish content (incl. chunked text).
   $("#btn-wrap").classList.toggle("hidden", data.type === "binary");
 
+  // In-file find for any rendered (non-binary) content, when the browser
+  // supports the CSS Custom Highlight API. Opening a file closes any stale bar.
+  $("#btn-find").classList.toggle("hidden", data.type === "binary" || !findSupported());
+  closeFind();
+
   // Source xref — always shown when a file is open (server will say if unavailable).
   $("#btn-xref").classList.remove("hidden");
 
@@ -5768,6 +5773,146 @@ function renderSearchFile(f, query) {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !overlay.classList.contains("hidden")) close();
   });
+})();
+
+// ---------------------------------------------------------------------------
+// In-file find — highlight matches in the open file via the CSS Custom
+// Highlight API (no DOM mutation, so it works across every render mode).
+// ---------------------------------------------------------------------------
+
+/** Whether the browser supports the CSS Custom Highlight API we rely on. */
+function findSupported() {
+  return typeof Highlight === "function" && typeof CSS !== "undefined" && !!CSS.highlights;
+}
+
+const findState = { ranges: [], idx: 0, query: "" };
+
+/** Remove all find highlights and reset state. */
+function clearFindHighlights() {
+  if (findSupported()) {
+    CSS.highlights.delete("find");
+    CSS.highlights.delete("find-current");
+  }
+  findState.ranges = [];
+  findState.idx = 0;
+}
+
+/** Close the find bar and clear highlights. */
+function closeFind() {
+  const bar = document.getElementById("find-bar");
+  if (bar) bar.classList.add("hidden");
+  clearFindHighlights();
+  findState.query = "";
+}
+
+/** Open the find bar and focus the input. */
+function openFind() {
+  if (!findSupported()) return;
+  const bar = document.getElementById("find-bar");
+  const input = /** @type {HTMLInputElement} */ (document.getElementById("find-input"));
+  if (!bar || !input) return;
+  bar.classList.remove("hidden");
+  input.focus();
+  input.select();
+  if (input.value.trim()) runFind(input.value);
+}
+
+/** Collect Ranges for every case-insensitive match of `query` under #viewer. */
+function collectFindRanges(query) {
+  const viewer = document.getElementById("viewer");
+  const ranges = [];
+  if (!viewer || !query) return ranges;
+  const needle = query.toLowerCase();
+  const walker = document.createTreeWalker(viewer, NodeFilter.SHOW_TEXT, null);
+  let node;
+  while ((node = walker.nextNode())) {
+    const text = node.nodeValue || "";
+    if (!text) continue;
+    const hay = text.toLowerCase();
+    let from = 0;
+    let i;
+    while ((i = hay.indexOf(needle, from)) !== -1) {
+      const r = document.createRange();
+      r.setStart(node, i);
+      r.setEnd(node, i + needle.length);
+      ranges.push(r);
+      from = i + needle.length;
+    }
+  }
+  return ranges;
+}
+
+/** Run a find for `query`, highlight all matches, focus the first. */
+function runFind(query) {
+  const count = document.getElementById("find-count");
+  clearFindHighlights();
+  findState.query = query;
+  const q = query.trim();
+  if (!q) {
+    if (count) count.textContent = "0/0";
+    return;
+  }
+  findState.ranges = collectFindRanges(q);
+  if (!findState.ranges.length) {
+    if (count) count.textContent = "0/0";
+    return;
+  }
+  CSS.highlights.set("find", new Highlight(...findState.ranges));
+  findState.idx = 0;
+  focusFindMatch();
+}
+
+/** Highlight + scroll to the current match and update the counter. */
+function focusFindMatch() {
+  const { ranges, idx } = findState;
+  if (!ranges.length) return;
+  const cur = ranges[idx];
+  CSS.highlights.set("find-current", new Highlight(cur));
+  const el = cur.startContainer.parentElement;
+  if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  const count = document.getElementById("find-count");
+  if (count) count.textContent = `${idx + 1}/${ranges.length}`;
+}
+
+/** Step to the next/previous match (wrapping). */
+function stepFind(delta) {
+  if (!findState.ranges.length) return;
+  findState.idx = (findState.idx + delta + findState.ranges.length) % findState.ranges.length;
+  focusFindMatch();
+}
+
+// Wire the find bar + toolbar button.
+(function setupFind() {
+  const btn = document.getElementById("btn-find");
+  const input = /** @type {HTMLInputElement} */ (document.getElementById("find-input"));
+  if (!btn || !input) return;
+  if (!findSupported()) {
+    btn.classList.add("hidden");
+    return;
+  }
+  let debounce = null;
+  btn.addEventListener("click", openFind);
+  input.addEventListener("input", () => {
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => runFind(input.value), 150);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (debounce) clearTimeout(debounce);
+      // If the query is unchanged, Enter just advances; otherwise re-run.
+      if (input.value.trim() === findState.query.trim() && findState.ranges.length) {
+        stepFind(e.shiftKey ? -1 : 1);
+      } else {
+        runFind(input.value);
+      }
+    } else if (e.key === "Escape") {
+      closeFind();
+    }
+  });
+  document.getElementById("find-next")?.addEventListener("click", () => stepFind(1));
+  document.getElementById("find-prev")?.addEventListener("click", () => stepFind(-1));
+  document.getElementById("find-close")?.addEventListener("click", closeFind);
 })();
 
 // ---------------------------------------------------------------------------

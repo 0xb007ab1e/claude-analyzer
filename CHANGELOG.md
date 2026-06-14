@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-06-13
+
+### Added
+
+- **Quick-open command palette (Ctrl/⌘K).** Fuzzy-find and open any file by path
+  — arrow keys to navigate, Enter to open, Esc to close (also via the ⚡ Open
+  button / Views menu). Ranking is done server-side over the live tree cache
+  (`GET /api/paths?q=`) with a subsequence scorer that favours contiguous, word-
+  boundary, and basename matches.
+
 ## [0.1.12] - 2026-06-13
 
 ### Added
@@ -219,6 +229,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.13]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.13
 [0.1.12]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.12
 [0.1.11]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.11
 [0.1.10]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.10

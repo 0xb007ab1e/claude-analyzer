@@ -2827,3 +2827,47 @@ tr.sev-info   td { color: var(--text); }
   font-size: 13px;
 }
 .auth-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* --- Line view (jump-to-line from search) -------------------------------- */
+.line-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.line-rows {
+  overflow-x: auto;
+}
+.ln-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ln-no {
+  color: var(--text-dim);
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ln-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* Honour the global wrap toggle (body.nowrap). */
+body.nowrap .ln-text {
+  white-space: pre;
+}
+.ln-hit {
+  background: var(--bg-alt);
+  border-left: 3px solid var(--warn);
+  margin-left: -3px;
+  border-radius: 2px;
+}
+.ln-hit .ln-no {
+  color: var(--warn);
+  font-weight: 700;
+}

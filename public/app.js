@@ -283,6 +283,135 @@ async function openFile(relPath, reveal) {
   flashAncestorFolder(relPath);
 }
 
+/** Lead-in lines kept above the target, and per-page line count, for line view. */
+const LINE_VIEW_LEAD = 80;
+const LINE_VIEW_PAGE = 600;
+
+/**
+ * Open a file in a line-numbered view scrolled to (and highlighting) a target
+ * line — used by search hits to jump straight to the match. Works for any text
+ * file (chunked or not) via /api/file-lines; snippets stay redacted by default.
+ *
+ * @param {string} relPath - Root-relative file path.
+ * @param {number} line    - 1-based line to highlight and scroll to.
+ */
+async function openFileAtLine(relPath, line) {
+  setEditing(false);
+  closeDrawers();
+  const overlay = document.getElementById("search-overlay");
+  if (overlay) overlay.classList.add("hidden"); // reveal the viewer behind search
+  const viewer = $("#viewer");
+  viewer.innerHTML = '<div class="empty">Loading…</div>';
+  const from = Math.max(0, line - 1 - LINE_VIEW_LEAD); // file-lines `from` is 0-based
+  let page;
+  try {
+    page = await api(`/api/file-lines?path=${encodeURIComponent(relPath)}&from=${from}&count=${LINE_VIEW_PAGE}`);
+  } catch (e) {
+    viewer.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  // Reuse the toolbar/banner; `chunked:true` hides Edit (we don't edit a window).
+  const data = {
+    path: relPath,
+    type: page.type,
+    size: page.size,
+    mtime: page.mtime,
+    sensitive: page.sensitive,
+    redacted: page.redacted,
+    chunked: true,
+  };
+  state.current = data;
+  renderBreadcrumbs(relPath);
+  renderToolbar(data);
+  renderBanner(data);
+  viewer.innerHTML = "";
+  viewer.appendChild(renderLineView(relPath, page, line));
+  flashAncestorFolder(relPath);
+}
+
+/**
+ * Render a line-numbered view from a /api/file-lines page, highlighting and
+ * scrolling to `targetLine`, with a "Load more" to page forward and an
+ * "Open full file" escape hatch to the rich renderer.
+ *
+ * @param {string} path - Root-relative file path.
+ * @param {object} firstPage - The initial /api/file-lines response.
+ * @param {number} targetLine - 1-based line to highlight.
+ * @returns {HTMLElement}
+ */
+function renderLineView(path, firstPage, targetLine) {
+  const wrap = document.createElement("div");
+  wrap.className = "line-view";
+
+  const head = document.createElement("div");
+  head.className = "line-view-head";
+  const status = document.createElement("span");
+  status.className = "chunk-status";
+  status.textContent = `line ${targetLine.toLocaleString()} of ${firstPage.total.toLocaleString()}`;
+  const full = document.createElement("button");
+  full.className = "btn";
+  full.textContent = "Open full file";
+  full.title = "Switch to the normal (rendered) view";
+  full.addEventListener("click", () => openFile(path, false));
+  head.append(status, full);
+
+  const body = document.createElement("div");
+  body.className = "line-rows code";
+
+  let nextFrom = 0;
+  let targetEl = null;
+  function appendPage(page) {
+    for (const ln of page.lines) {
+      const row = document.createElement("div");
+      row.className = "ln-row";
+      const no = document.createElement("span");
+      no.className = "ln-no";
+      no.textContent = String(ln.n + 1);
+      const tx = document.createElement("span");
+      tx.className = "ln-text";
+      tx.textContent = ln.text;
+      row.append(no, tx);
+      if (ln.n + 1 === targetLine) {
+        row.classList.add("ln-hit");
+        targetEl = row;
+      }
+      body.appendChild(row);
+    }
+    nextFrom = page.from + page.lines.length;
+  }
+  appendPage(firstPage);
+
+  const more = document.createElement("button");
+  more.className = "btn primary chunk-more";
+  more.textContent = "Load more";
+  more.classList.toggle("hidden", !firstPage.hasMore);
+  let loading = false;
+  more.addEventListener("click", async () => {
+    if (loading) return;
+    loading = true;
+    more.disabled = true;
+    more.textContent = "Loading…";
+    let page;
+    try {
+      page = await api(`/api/file-lines?path=${encodeURIComponent(path)}&from=${nextFrom}&count=${LINE_VIEW_PAGE}`);
+    } catch {
+      more.textContent = "Error";
+      loading = false;
+      return;
+    }
+    appendPage(page);
+    more.classList.toggle("hidden", !page.hasMore);
+    more.disabled = false;
+    more.textContent = "Load more";
+    loading = false;
+  });
+
+  wrap.append(head, body, more);
+  // Scroll to the highlighted line once it's in the DOM.
+  if (targetEl) setTimeout(() => targetEl.scrollIntoView({ block: "center" }), 0);
+  return wrap;
+}
+
 function renderBreadcrumbs(relPath) {
   const bc = $("#breadcrumbs");
   bc.innerHTML = "";
@@ -5506,6 +5635,14 @@ function highlightSnippet(snippet, query) {
   return frag;
 }
 
+/** Hide the search overlay (used when a result opens a file behind it). */
+function closeSearchOverlay() {
+  const o = document.getElementById("search-overlay");
+  const t = document.getElementById("search-toggle");
+  if (o) o.classList.add("hidden");
+  if (t) t.setAttribute("aria-expanded", "false");
+}
+
 /**
  * Run a search and render the results.
  * @param {string} query
@@ -5565,13 +5702,16 @@ function renderSearchFile(f, query) {
   const extra = f.total > f.hits.length ? `${f.hits.length} of ${f.total}` : `${f.total}`;
   count.textContent = `${extra} hit${f.total !== 1 ? "s" : ""}`;
   head.append(name, count);
-  head.addEventListener("click", () => openFile(f.path, false));
+  head.addEventListener("click", () => {
+    closeSearchOverlay();
+    openFile(f.path, false);
+  });
   group.appendChild(head);
 
   for (const h of f.hits) {
     const row = document.createElement("div");
     row.className = "search-hit";
-    row.title = `Open ${f.path} (line ${h.line})`;
+    row.title = `Open ${f.path} at line ${h.line}`;
     const ln = document.createElement("span");
     ln.className = "search-hit-line";
     ln.textContent = `L${h.line}`;
@@ -5579,7 +5719,10 @@ function renderSearchFile(f, query) {
     snip.className = "search-hit-snippet";
     snip.appendChild(highlightSnippet(h.snippet, query));
     row.append(ln, snip);
-    row.addEventListener("click", () => openFile(f.path, false));
+    row.addEventListener("click", () => {
+      closeSearchOverlay();
+      openFileAtLine(f.path, h.line); // jump to the matched line
+    });
     group.appendChild(row);
   }
   return group;

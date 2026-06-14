@@ -41,8 +41,9 @@ A **▾ Views** menu opens analytical panels layered over the `.claude` tree:
 
 - **🔍 Search files** — full-text search across the whole tree (file *contents*, not
   just names). Case-insensitive, results grouped by file with line numbers and
-  **redacted** snippets (open a file to reveal); click a hit to open it. Bounded and
-  time-budgeted; served by `/api/search`.
+  **redacted** snippets (open a file to reveal); click a hit to **jump to that line**
+  — a line-numbered view scrolled to and highlighting the match (works even in the
+  multi-MiB transcripts). Bounded and time-budgeted; served by `/api/search`.
 - **🕒 Activity log** — a live feed of filesystem changes as Claude Code writes them.
 - **🗂 Projects** — decodes `projects/<encoded-cwd>/` back to real working directories
   and groups each project's sessions; click a session to open its transcript.

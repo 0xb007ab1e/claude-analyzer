@@ -2912,3 +2912,26 @@ body.nowrap .ln-text {
   background: var(--accent);
   color: #fff;
 }
+
+/* --- Compare / diff two files -------------------------------------------- */
+.banner.compare-arm {
+  background: var(--bg-alt);
+  border: 1px dashed var(--accent);
+  color: var(--text);
+}
+.compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.compare-title {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.compare-a { color: var(--danger); }
+.compare-b { color: var(--ok); }
+.compare-arrow { color: var(--text-dim); }

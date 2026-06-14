@@ -263,6 +263,12 @@ function renderNode(entry) {
 // ---------------------------------------------------------------------------
 
 async function openFile(relPath, reveal) {
+  // Compare mode armed: the next file picked becomes the "B" side of a diff.
+  if (state.compareA && relPath !== state.compareA) {
+    const a = state.compareA;
+    cancelCompareArm();
+    return openCompare(a, relPath, reveal);
+  }
   setEditing(false);
   closeDrawers(); // close any open slide-out drawer
   const viewer = $("#viewer");
@@ -296,6 +302,12 @@ const LINE_VIEW_PAGE = 600;
  * @param {number} line    - 1-based line to highlight and scroll to.
  */
 async function openFileAtLine(relPath, line) {
+  // Honour an armed compare even when picking the second file from a search hit.
+  if (state.compareA && relPath !== state.compareA) {
+    const a = state.compareA;
+    cancelCompareArm();
+    return openCompare(a, relPath, false);
+  }
   setEditing(false);
   closeDrawers();
   const overlay = document.getElementById("search-overlay");
@@ -412,6 +424,106 @@ function renderLineView(path, firstPage, targetLine) {
   return wrap;
 }
 
+/** Arm compare mode: the next file picked becomes the diff's "B" side. */
+function armCompare() {
+  if (!state.current || !state.current.path) return;
+  state.compareA = state.current.path;
+  const banner = $("#banner");
+  banner.className = "banner compare-arm";
+  banner.textContent = `⇄ Compare: pick a second file to diff against “${state.current.path}” (Esc to cancel).`;
+  banner.classList.remove("hidden");
+}
+
+/** Cancel armed compare mode (does not affect an already-rendered diff). */
+function cancelCompareArm() {
+  if (!state.compareA) return;
+  state.compareA = null;
+  const banner = $("#banner");
+  if (banner.classList.contains("compare-arm")) banner.classList.add("hidden");
+}
+
+/**
+ * Fetch and render a line-level diff between two files. Redacted by default;
+ * Reveal re-runs over raw contents.
+ *
+ * @param {string} a - "before" path.
+ * @param {string} b - "after" path.
+ * @param {boolean} reveal - whether to diff raw (un-redacted) contents.
+ */
+async function openCompare(a, b, reveal) {
+  setEditing(false);
+  closeDrawers();
+  const viewer = $("#viewer");
+  viewer.innerHTML = '<div class="empty">Comparing…</div>';
+  let data;
+  try {
+    data = await api(`/api/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}${reveal ? "&reveal=1" : ""}`);
+  } catch (e) {
+    viewer.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  // Synthetic "current" so the toolbar hides file-specific actions.
+  state.current = { path: b, type: "diff", compare: true };
+  renderBreadcrumbs(b);
+  renderToolbar({ type: "diff", size: 0, mtime: Date.now(), compare: true, chunked: true });
+  $("#banner").classList.add("hidden");
+  viewer.innerHTML = "";
+  viewer.appendChild(renderCompareView(a, b, data));
+}
+
+/** Build the compare view DOM (header + reveal + diff table). */
+function renderCompareView(a, b, data) {
+  const wrap = document.createElement("div");
+  wrap.className = "compare-view";
+
+  const head = document.createElement("div");
+  head.className = "compare-head";
+  const title = document.createElement("div");
+  title.className = "compare-title";
+  const aEl = document.createElement("span");
+  aEl.className = "compare-a";
+  aEl.textContent = a;
+  const arrow = document.createElement("span");
+  arrow.className = "compare-arrow";
+  arrow.textContent = " ⇄ ";
+  const bEl = document.createElement("span");
+  bEl.className = "compare-b";
+  bEl.textContent = b;
+  title.append(aEl, arrow, bEl);
+  head.appendChild(title);
+  if (data.redacted && !data.revealed) {
+    const rev = document.createElement("button");
+    rev.className = "btn";
+    rev.textContent = "👁 Reveal";
+    rev.title = "Re-run the diff over raw (un-redacted) contents";
+    rev.addEventListener("click", () => openCompare(a, b, true));
+    head.appendChild(rev);
+  }
+  wrap.appendChild(head);
+
+  if (data.redacted && !data.revealed) {
+    const note = document.createElement("div");
+    note.className = "banner";
+    note.textContent = "Diff is over redacted contents — masked values won't reflect real changes. Use Reveal.";
+    wrap.appendChild(note);
+  } else if (data.revealed) {
+    const note = document.createElement("div");
+    note.className = "banner danger";
+    note.textContent = "⚠ Diff over RAW contents — secrets are visible.";
+    wrap.appendChild(note);
+  }
+
+  if (!data.diff.length) {
+    const same = document.createElement("div");
+    same.className = "empty";
+    same.textContent = "The two files are identical.";
+    wrap.appendChild(same);
+  } else {
+    wrap.appendChild(buildDiffTable(data.diff));
+  }
+  return wrap;
+}
+
 function renderBreadcrumbs(relPath) {
   const bc = $("#breadcrumbs");
   bc.innerHTML = "";
@@ -450,6 +562,10 @@ function renderToolbar(data) {
   // supports the CSS Custom Highlight API. Opening a file closes any stale bar.
   $("#btn-find").classList.toggle("hidden", data.type === "binary" || !findSupported());
   closeFind();
+
+  // Compare: only for fully-loaded text files (not binary, not chunked, and not
+  // the synthetic compare view itself).
+  $("#btn-compare").classList.toggle("hidden", data.type === "binary" || !!data.chunked || data.compare === true);
 
   // Source xref — always shown when a file is open (server will say if unavailable).
   $("#btn-xref").classList.remove("hidden");
@@ -3702,6 +3818,12 @@ async function init() {
   $("#btn-wrap").addEventListener("click", () => {
     const nowrap = document.body.classList.toggle("nowrap");
     localStorage.setItem("nowrap", nowrap ? "1" : "0");
+  });
+
+  // Compare: arm "pick a second file" mode; Esc cancels it.
+  $("#btn-compare").addEventListener("click", armCompare);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.compareA) cancelCompareArm();
   });
 
   // Live-watch pause/resume toggle.

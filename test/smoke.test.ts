@@ -175,6 +175,17 @@ test("GET /api/search finds seeded content; short query is rejected", async () =
   assert.equal(short.status, 400);
 });
 
+test("GET /api/diff compares two files, refuses binary, validates params", async () => {
+  // Identical content → empty diff.
+  const same = await get("/api/diff?a=hello.txt&b=hello.txt");
+  assert.equal(same.status, 200);
+  assert.deepEqual(JSON.parse(same.body).diff, []);
+  // A binary file is refused.
+  assert.equal((await get("/api/diff?a=hello.txt&b=sub/pic.png")).status, 400);
+  // Missing a parameter is a 400.
+  assert.equal((await get("/api/diff?a=hello.txt")).status, 400);
+});
+
 test("GET /api/journal returns a filtered slice + summary", async () => {
   const r = await get("/api/journal?kind=audit&limit=50");
   assert.equal(r.status, 200);

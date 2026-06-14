@@ -5898,6 +5898,145 @@ function renderSearchFile(f, query) {
 })();
 
 // ---------------------------------------------------------------------------
+// Quick-open command palette (Ctrl/⌘K) — fuzzy-find any file by path.
+// ---------------------------------------------------------------------------
+
+let paletteItems = [];
+let paletteSel = 0;
+let paletteDebounce = null;
+let paletteSeq = 0;
+
+/** Open the palette and load an initial (unfiltered) list. */
+function openPalette() {
+  const modal = document.getElementById("palette");
+  const input = /** @type {HTMLInputElement} */ (document.getElementById("palette-input"));
+  if (!modal || !input) return;
+  modal.classList.remove("hidden");
+  input.value = "";
+  input.focus();
+  runPalette("");
+}
+
+/** Close the palette. */
+function closePalette() {
+  document.getElementById("palette")?.classList.add("hidden");
+}
+
+/** Fetch fuzzy-ranked paths for `q` and render them (ignoring stale responses). */
+async function runPalette(q) {
+  const seq = ++paletteSeq;
+  let data;
+  try {
+    data = await api(`/api/paths?q=${encodeURIComponent(q)}&limit=50`);
+  } catch {
+    return;
+  }
+  if (seq !== paletteSeq) return; // a newer query superseded this one
+  paletteItems = data.paths || [];
+  paletteSel = 0;
+  renderPalette();
+}
+
+/** Render the current palette results. */
+function renderPalette() {
+  const ul = document.getElementById("palette-results");
+  if (!ul) return;
+  ul.innerHTML = "";
+  if (!paletteItems.length) {
+    const li = document.createElement("li");
+    li.className = "palette-empty";
+    li.textContent = "No matching files.";
+    ul.appendChild(li);
+    return;
+  }
+  paletteItems.forEach((p, idx) => {
+    const li = document.createElement("li");
+    li.className = "palette-item" + (idx === paletteSel ? " sel" : "");
+    li.setAttribute("role", "option");
+    const slash = p.lastIndexOf("/");
+    const dir = document.createElement("span");
+    dir.className = "palette-dir";
+    dir.textContent = slash >= 0 ? p.slice(0, slash + 1) : "";
+    const base = document.createElement("span");
+    base.className = "palette-base";
+    base.textContent = slash >= 0 ? p.slice(slash + 1) : p;
+    li.append(dir, base);
+    li.addEventListener("click", () => {
+      closePalette();
+      openFile(p, false);
+    });
+    li.addEventListener("mousemove", () => {
+      if (paletteSel !== idx) {
+        paletteSel = idx;
+        updatePaletteSel();
+      }
+    });
+    ul.appendChild(li);
+  });
+}
+
+/** Sync the `.sel` class + scroll the selected row into view. */
+function updatePaletteSel() {
+  const items = document.getElementById("palette-results")?.children;
+  if (!items) return;
+  for (let i = 0; i < items.length; i++) items[i].classList.toggle("sel", i === paletteSel);
+  items[paletteSel]?.scrollIntoView({ block: "nearest" });
+}
+
+/** Move the selection by `delta`, wrapping. */
+function movePalette(delta) {
+  if (!paletteItems.length) return;
+  paletteSel = (paletteSel + delta + paletteItems.length) % paletteItems.length;
+  updatePaletteSel();
+}
+
+/** Open the currently-selected path. */
+function choosePalette() {
+  const p = paletteItems[paletteSel];
+  if (!p) return;
+  closePalette();
+  openFile(p, false);
+}
+
+// Wire the palette: toggle button, input, keys, and global Ctrl/⌘K.
+(function setupPalette() {
+  const modal = document.getElementById("palette");
+  const toggle = document.getElementById("palette-toggle");
+  const input = /** @type {HTMLInputElement} */ (document.getElementById("palette-input"));
+  if (!modal || !toggle || !input) return;
+
+  toggle.addEventListener("click", openPalette);
+  input.addEventListener("input", () => {
+    if (paletteDebounce) clearTimeout(paletteDebounce);
+    paletteDebounce = setTimeout(() => runPalette(input.value.trim()), 90);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      movePalette(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      movePalette(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      choosePalette();
+    } else if (e.key === "Escape") {
+      closePalette();
+    }
+  });
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closePalette(); // backdrop click
+  });
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      if (modal.classList.contains("hidden")) openPalette();
+      else closePalette();
+    }
+  });
+})();
+
+// ---------------------------------------------------------------------------
 // In-file find — highlight matches in the open file via the CSS Custom
 // Highlight API (no DOM mutation, so it works across every render mode).
 // ---------------------------------------------------------------------------

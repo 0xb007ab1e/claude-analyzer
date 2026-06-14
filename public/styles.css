@@ -2935,3 +2935,66 @@ body.nowrap .ln-text {
 .compare-a { color: var(--danger); }
 .compare-b { color: var(--ok); }
 .compare-arrow { color: var(--text-dim); }
+
+/* --- Quick-open command palette ------------------------------------------ */
+.palette {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 1000;
+  padding-top: 12vh;
+}
+.palette-box {
+  width: min(640px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.palette-input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  padding: 12px 14px;
+}
+.palette-input:focus { outline: none; }
+.palette-results {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+}
+.palette-item {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-item.sel { background: var(--accent); }
+.palette-item.sel .palette-dir,
+.palette-item.sel .palette-base { color: #fff; }
+.palette-dir { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
+.palette-base { color: var(--text); font-weight: 600; flex: 0 0 auto; }
+.palette-empty { padding: 10px; color: var(--text-dim); font-size: 13px; }
+.palette-hint {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+}

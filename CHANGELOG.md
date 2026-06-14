@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-06-13
+
+### Added
+
+- **Find in file (⌕ Find).** Search within the open file with a match count and
+  next/prev navigation. Matches are highlighted via the CSS Custom Highlight API
+  (ranges over the rendered text — no DOM mutation), so it works uniformly across
+  every render mode (Markdown, session timeline, JSON, plain text, the chunked
+  loader, and the line view) and clears completely on close. Enter / Shift+Enter
+  cycle matches, ▲/▼ buttons, Esc closes; feature-detected and hidden if the
+  browser lacks the Highlight API.
+
 ## [0.1.10] - 2026-06-13
 
 ### Added
@@ -197,6 +209,7 @@ Runs on Node ≥ 22.6 via native TypeScript type-stripping; no build step.
   checksum-verified); SHA-pinned actions, least-privilege permissions.
 - **0BSD** license; `SECURITY.md` with private vulnerability reporting.
 
+[0.1.11]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.11
 [0.1.10]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.10
 [0.1.9]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.9
 [0.1.8]: https://github.com/0xb007ab1e/claude-analyzer/releases/tag/v0.1.8
